@@ -1,3 +1,8 @@
+// TinyLZMA
+// Source from https://github.com/WangXuan95/TinyLzma
+
+
+#include <stdlib.h>                     // this code only use malloc and free
 
 #include "TinyLzmaDecompress.h"
 
@@ -161,22 +166,6 @@ static uint32_t rangeDecodeByteMatched (RangeDecoder_t *d, uint16_t *p_prob, uin
 // LZMA Decoder
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-#define   N_STATES                                  12
-#define   N_LIT_STATES                              7
-
-#define   MAX_LC_SPEC                               8
-#define   MAX_LC                                    4
-#define   N_PREV_BYTE_LC_MSBS                       (1 << MAX_LC)
-
-#define   MAX_LP_SPEC                               4
-#define   MAX_LP                                    4
-#define   N_LIT_POS_STATES                          (1 << MAX_LP)
-
-#define   MAX_PB_SPEC                               4
-#define   MAX_PB                                    4
-#define   N_POS_STATES                              (1 << MAX_PB)                                                                 // all probabilities are init to 50% (half probability)
-
-
 typedef enum {          // packet_type
     PKT_LIT,
     PKT_MATCH,
@@ -207,14 +196,35 @@ static uint8_t stateTransition (uint8_t state, PACKET_t type) {
 }
 
 
-#define   INIT_PROBS(probs)                         {               \
-    size_t i;                                                       \
-    size_t array_size = ( sizeof(probs) / sizeof(uint16_t) );       \
-    uint16_t *array1d = (uint16_t*)(probs);                         \
-    for (i=0; i<array_size; i++)                                    \
-        array1d[i] = RANGE_CODE_HALF_PROBABILITY;                   \
-}      
 
+#define   N_STATES                                  12
+#define   N_LIT_STATES                              7
+
+#define   MAX_LC                                    8                    // max value of lc is 8, see LZMA specification
+#define   N_PREV_BYTE_LC_MSBS                       (1 << MAX_LC)
+
+#define   MAX_LP                                    4                    // max value of lp is 4, see LZMA specification
+#define   N_LIT_POS_STATES                          (1 << MAX_LP)
+
+#define   MAX_PB                                    4                    // max value of pb is 4, see LZMA specification
+#define   N_POS_STATES                              (1 << MAX_PB)
+
+
+#define   INIT_PROBS(probs)                         {                  \
+    uint16_t *p = (uint16_t*)(probs);                                  \
+    uint16_t *q = p + (sizeof(probs) / sizeof(uint16_t));              \
+    for (; p<q; p++)                                                   \
+        *p = RANGE_CODE_HALF_PROBABILITY;                              \
+}                                                                       // all probabilities are init to 50% (half probability)
+
+
+#define   INIT_PROBS_LITERAL(probs)                 {                  \
+    uint16_t *p = (uint16_t*)(probs);                                  \
+    uint16_t *q = p + (N_PREV_BYTE_LC_MSBS*N_LIT_POS_STATES*3*(1<<8)); \
+    for (; p<q; p++)                                                   \
+        *p = RANGE_CODE_HALF_PROBABILITY;                              \
+}                                                                       // all probabilities are init to 50% (half probability)
+    
 
 static int lzmaDecode (const uint8_t *p_src, size_t src_len, uint8_t *p_dst, size_t *p_dst_len, uint8_t lc, uint8_t lp, uint8_t pb) {
     const uint32_t lc_shift = (8 - lc);
@@ -238,7 +248,6 @@ static int lzmaDecode (const uint8_t *p_src, size_t src_len, uint8_t *p_dst, siz
     uint16_t probs_is_rep0_long [N_STATES] [N_POS_STATES] ;
     uint16_t probs_is_rep1      [N_STATES] ;
     uint16_t probs_is_rep2      [N_STATES] ;
-    uint16_t probs_literal      [N_PREV_BYTE_LC_MSBS] [N_LIT_POS_STATES] [3*(1<<8)];
     uint16_t probs_dist_slot    [4]  [(1<<6)-1];
     uint16_t probs_dist_special [10] [(1<<5)-1];
     uint16_t probs_dist_align   [(1<<4)-1];
@@ -248,13 +257,21 @@ static int lzmaDecode (const uint8_t *p_src, size_t src_len, uint8_t *p_dst, siz
     uint16_t probs_len_mid      [2] [N_POS_STATES] [(1<<3)-1];
     uint16_t probs_len_high     [2] [(1<<8)-1];
     
+    // uint16_t probs_literal   [N_PREV_BYTE_LC_MSBS] [N_LIT_POS_STATES] [3*(1<<8)];
+    
+    uint16_t (*probs_literal) [N_LIT_POS_STATES] [3*(1<<8)];
+    
+    probs_literal = (uint16_t (*) [N_LIT_POS_STATES] [3*(1<<8)]) malloc (sizeof(uint16_t) * N_PREV_BYTE_LC_MSBS * N_LIT_POS_STATES * 3*(1<<8));    // since this array is quiet large (3145728 items, 6MB), we need to use malloc
+    
+    if (probs_literal == 0)
+        return R_ERR_MEMORY_RUNOUT;
+    
     INIT_PROBS(probs_is_match);
     INIT_PROBS(probs_is_rep);
     INIT_PROBS(probs_is_rep0);
     INIT_PROBS(probs_is_rep0_long);
     INIT_PROBS(probs_is_rep1);
     INIT_PROBS(probs_is_rep2);
-    INIT_PROBS(probs_literal);
     INIT_PROBS(probs_dist_slot);
     INIT_PROBS(probs_dist_special);
     INIT_PROBS(probs_dist_align);
@@ -263,16 +280,19 @@ static int lzmaDecode (const uint8_t *p_src, size_t src_len, uint8_t *p_dst, siz
     INIT_PROBS(probs_len_low);
     INIT_PROBS(probs_len_mid);
     INIT_PROBS(probs_len_high);
+    //INIT_PROBS(probs_literal);
+    INIT_PROBS_LITERAL(probs_literal);
     
     while (pos < *p_dst_len) {                                                                                // main loop
-        const uint32_t literal_pos_state = lp_mask & (uint32_t)pos;
         const uint32_t pos_state         = pb_mask & (uint32_t)pos;
         
         if (coder.overflow)
             return R_ERR_INPUT_OVERFLOW;
         
         if ( !rangeDecodeBit(&coder, &probs_is_match[state][pos_state]) ) {                                   // decoded bit sequence = 0 (packet LIT)
-            uint32_t prev_byte_lc_msbs=0, curr_byte;
+            const uint32_t literal_pos_state = lp_mask & (uint32_t)pos;
+            uint32_t       prev_byte_lc_msbs = 0;
+            uint32_t       curr_byte;
             
             if (pos > 0)
                 prev_byte_lc_msbs = lc_mask & (p_dst[pos-1] >> lc_shift);
@@ -285,7 +305,7 @@ static int lzmaDecode (const uint8_t *p_src, size_t src_len, uint8_t *p_dst, siz
                 curr_byte = rangeDecodeByteMatched(&coder, probs_literal[prev_byte_lc_msbs][literal_pos_state], p_dst[pos-rep0]);
             }
             
-            //PRINTF("[LZMAd]   @%08lx PKT_LIT   decoded_byte=%02x   state=%d\n", pos, curr_byte, state);
+            //printf("[LZMAd]   @%08lx PKT_LIT   decoded_byte=%02x   state=%d\n", pos, curr_byte, state);
             
             if (pos == *p_dst_len)
                 return R_ERR_OUTPUT_OVERFLOW;
@@ -302,35 +322,35 @@ static int lzmaDecode (const uint8_t *p_src, size_t src_len, uint8_t *p_dst, siz
                 rep3 = rep2;
                 rep2 = rep1;
                 rep1 = rep0;
-                //PRINTF("[LZMAd]   @%08lx PKT_MATCH   state=%d\n", pos, state);
+                //printf("[LZMAd]   @%08lx PKT_MATCH   state=%d\n", pos, state);
                 state = stateTransition(state, PKT_MATCH);
             } else if ( !rangeDecodeBit(&coder, &probs_is_rep0[state]) ) {                                   // decoded bit sequence = 110 (packet SHORTREP or LONGREP0)
                 dist = rep0;
                 if ( !rangeDecodeBit(&coder, &probs_is_rep0_long[state][pos_state]) ) {                      // decoded bit sequence = 1100 (packet SHORTREP)
                     len = 1;
-                    //PRINTF("[LZMAd]   @%08lx PKT_SHORTREP   state=%d\n", pos, state);
+                    //printf("[LZMAd]   @%08lx PKT_SHORTREP   state=%d\n", pos, state);
                     state = stateTransition(state, PKT_SHORTREP);
                 } else {                                                                                     // decoded bit sequence = 1101 (packet LONGREP0)
-                    //PRINTF("[LZMAd]   @%08lx PKT_REP0   state=%d\n", pos, state);
+                    //printf("[LZMAd]   @%08lx PKT_REP0   state=%d\n", pos, state);
                     state = stateTransition(state, PKT_REP0);
                 }
             } else if ( !rangeDecodeBit(&coder, &probs_is_rep1[state]) ) {                                   // decoded bit sequence = 1110 (packet LONGREP1)
                 dist = rep1;
                 rep1 = rep0;
-                //PRINTF("[LZMAd]   @%08lx PKT_REP1   state=%d\n", pos, state);
+                //printf("[LZMAd]   @%08lx PKT_REP1   state=%d\n", pos, state);
                 state = stateTransition(state, PKT_REP1);
             } else if ( !rangeDecodeBit(&coder, &probs_is_rep2[state]) ) {                                   // decoded bit sequence = 11110 (packet LONGREP2)
                 dist = rep2;
                 rep2 = rep1;
                 rep1 = rep0;
-                //PRINTF("[LZMAd]   @%08lx PKT_REP2   state=%d\n", pos, state);
+                //printf("[LZMAd]   @%08lx PKT_REP2   state=%d\n", pos, state);
                 state = stateTransition(state, PKT_REP2);
             } else {                                                                                         // decoded bit sequence = 11111 (packet LONGREP3)
                 dist = rep3;
                 rep3 = rep2;
                 rep2 = rep1;
                 rep1 = rep0;
-                //PRINTF("[LZMAd]   @%08lx PKT_REP3   state=%d\n", pos, state);
+                //printf("[LZMAd]   @%08lx PKT_REP3   state=%d\n", pos, state);
                 state = stateTransition(state, PKT_REP3);
             }
             
@@ -341,7 +361,7 @@ static int lzmaDecode (const uint8_t *p_src, size_t src_len, uint8_t *p_dst, siz
                     len =  10 + rangeDecodeInt(&coder, probs_len_mid[dist==0][pos_state], 3);                // len = 10~17
                 else
                     len =  18 + rangeDecodeInt(&coder,probs_len_high[dist==0], 8);                           // len = 18~273
-                //PRINTF("[LZMAd]   len = %u\n", len);
+                //printf("[LZMAd]   len = %u\n", len);
             }
             
             if (dist == 0) {                                                                                 // unknown distance, need to decode
@@ -378,13 +398,13 @@ static int lzmaDecode (const uint8_t *p_src, size_t src_len, uint8_t *p_dst, siz
                 dist  |= low_bits;
                 
                 if (dist == 0xFFFFFFFF) {
-                    //PRINTF("[LZMAd]   meet end marker\n");
+                    //printf("[LZMAd]   meet end marker\n");
                     break;
                 }
                 
                 dist ++;
                 
-                //PRINTF("[LZMAd]   dist_slot = %u   dist = %u\n", dist_slot, dist);
+                //printf("[LZMAd]   dist_slot = %u   dist = %u\n", dist_slot, dist);
             }
             
             rep0 = dist;
@@ -400,6 +420,8 @@ static int lzmaDecode (const uint8_t *p_src, size_t src_len, uint8_t *p_dst, siz
             }
         }
     }
+    
+    free(probs_literal);
     
     *p_dst_len = pos;
     
@@ -445,7 +467,7 @@ static int parseLzmaHeader (const uint8_t *p_src, uint8_t *p_lc, uint8_t *p_lp, 
     *p_lp = (uint8_t)(byte0 % 5);
     *p_pb = (uint8_t)(byte0 / 5);
     
-    if (*p_lc > MAX_LC_SPEC || *p_lp > MAX_LP_SPEC || *p_pb > MAX_PB_SPEC)
+    if (*p_lc > MAX_LC || *p_lp > MAX_LP || *p_pb > MAX_PB)
         return R_ERR_UNSUPPORTED;
     
     return R_OK;
@@ -462,18 +484,15 @@ int tinyLzmaDecompress (const uint8_t *p_src, size_t src_len, uint8_t *p_dst, si
     
     RET_IF_ERROR( parseLzmaHeader(p_src, &lc, &lp, &pb, &dict_len, &uncompressed_len, &uncompressed_len_known) )
     
-    //PRINTF("[LZMAd] lc=%d   lp=%d   pb=%d   dict_len=%u\n", lc, lp, pb, dict_len);
-    
-    if (lc > MAX_LC || lp > MAX_LP || pb > MAX_PB)
-        return R_ERR_NOT_YET_SUPPORTED;
+    //printf("[LZMAd] lc=%d   lp=%d   pb=%d   dict_len=%u\n", lc, lp, pb, dict_len);
     
     if (uncompressed_len_known) {
         if (uncompressed_len > *p_dst_len)
             return R_ERR_OUTPUT_OVERFLOW;
         *p_dst_len = uncompressed_len;
-        //PRINTF("[LZMAd] uncompressed length = %lu (parsed from header)\n"                                  , *p_dst_len);
+        //printf("[LZMAd] uncompressed length = %lu (parsed from header)\n"                                  , *p_dst_len);
     } else {
-        //PRINTF("[LZMAd] uncompressed length is not in header, decoding using output buffer length = %lu\n" , *p_dst_len);
+        //printf("[LZMAd] uncompressed length is not in header, decoding using output buffer length = %lu\n" , *p_dst_len);
     }
     
     RET_IF_ERROR( lzmaDecode(p_src+LZMA_HEADER_LEN, src_len-LZMA_HEADER_LEN, p_dst, p_dst_len, lc, lp, pb) );

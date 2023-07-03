@@ -1,3 +1,6 @@
+// TinyLZMA
+// Source from https://github.com/WangXuan95/TinyLzma
+
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -8,24 +11,29 @@
 
 
 
+// Function : convert a char from upper case to lower case
+static char toLowerCase (const char ch) {
+    if (ch >= 'A' && ch <= 'Z')
+        return ch + ('a' - 'A');
+    else
+        return ch;
+}
+
+
+// Function : assert that a string is end with pattern (ignore upper/lower case).
+//            e.g., if pattern is ".lzma", string is "a.lzma", it returns 1
+//                  if pattern is ".zip" , string is "a.lzma", it returns 0
 static int strEndswith (const char *pattern, const char *string) {
-    char ch1, ch2;
-    const char *p1 = pattern;
-    const char *p2 = string;
+    const char *p = pattern;
+    const char *q = string;
     
-    for (; *p1; p1++);
-    for (; *p2; p2++);
+    for (; *p; p++);                             // goto pattern's end
+    for (; *q; q++);                             // goto string's end
     
-    for (; p1>=pattern; p1--, p2--) {
-        if (p2 < string)
+    for (; !(p<pattern); p--, q--) {
+        if (q<string)                            // string is shorter than pattern
             return 0;
-        ch1 = *p1;
-        ch2 = *p2;
-        if (ch1 >= 'a' && ch1 <= 'z')
-            ch1 -= ('a' - 'A');
-        if (ch2 >= 'a' && ch2 <= 'z')
-            ch2 -= ('a' - 'A');
-        if (ch1 != ch2)
+        if (toLowerCase(*p) != toLowerCase(*q))  // mismatch
             return 0;
     }
     
@@ -33,26 +41,27 @@ static int strEndswith (const char *pattern, const char *string) {
 }
 
 
-
+// Function : remove a filename's path prefix.
+//            e.g., if fname is "a/b/c.txt", we will get "c.txt"
 static void removeDirectoryPathFromFileName (char *fname) {
-    char *psrc = fname;
-    char *pdst = fname;
+    char *p = fname;
+    char *q = fname;
     
-    for (; *psrc; psrc++) {
-        *pdst = *psrc;
-        if (*psrc == '/' || *psrc == '\\')      // '/' is file sep of linux, '\' is file sep of windows
-            pdst = fname;                       // back to base
+    for (; *p; p++) {
+        *q = *p;
+        if (*p == '/' || *p == '\\')      // '/' is file sep of linux, '\' is file sep of windows
+            q = fname;                    // back to base
         else
-            pdst ++;
+            q ++;
     };
     
-    *pdst = '\0';
+    *q = '\0';
 }
 
 
 
 const char *USAGE =
-    "  Tiny LZMA compressor & decompressor V0.1\n"
+    "  Tiny LZMA compressor & decompressor v0.2\n"
     "  Source from https://github.com/WangXuan95/TinyLzma\n"
     "\n"
     "  Usage : \n"
@@ -123,11 +132,10 @@ int main(int argc, char **argv) {
         case 1  :
             dst_len = DECOMPRESS_OUTPUT_MAX_LEN;
             break;
-        case 2  : 
-        default :  // case 3 : 
+        default :  // case 2 or 3 : 
             dst_len = src_len + (src_len>>2) + 4096;
-            if (dst_len < src_len)                                            // size_t data type overflow
-                dst_len = (~((size_t)0));                                     // max value of size_t
+            if (dst_len < src_len)                        // size_t data type overflow
+                dst_len = (~((size_t)0));                 // max value of size_t
             break;
     }
     
@@ -142,13 +150,16 @@ int main(int argc, char **argv) {
     
     
     switch (mode) {
-        case 1  : 
+        case 1  :
+            printf("decompressing...\n");
             res = tinyLzmaDecompress(p_src, src_len, p_dst, &dst_len);
             break;
         case 2  :
-            res = tinyLzmaCompress  (p_src, src_len, p_dst, &dst_len, 1);
+            printf("compressing...\n");
+            res = tinyLzmaCompress  (p_src, src_len, p_dst, &dst_len);
             break;
         default :  // case 3 :
+            printf("compressing...\n");
             removeDirectoryPathFromFileName(fname_src);
             res = tinyLzmaCompressToZipContainer(p_src, src_len, p_dst, &dst_len, fname_src);
             break;
@@ -173,6 +184,6 @@ int main(int argc, char **argv) {
     
     free(p_dst);
     
-    return R_OK;
+    return 0;
 }
 

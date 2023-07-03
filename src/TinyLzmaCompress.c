@@ -1,3 +1,8 @@
+// TinyLZMA
+// Source from https://github.com/WangXuan95/TinyLzma
+
+
+#include <stdlib.h>                     // this code only use malloc and free
 
 #include "TinyLzmaCompress.h"
 
@@ -13,7 +18,7 @@
 
 
 #define RET_IF_ERROR(expression)  {     \
-    int res = expression;               \
+    int res = (expression);             \
     if (res != R_OK)                    \
         return res;                     \
 }
@@ -200,56 +205,98 @@ static void rangeEncodeByteMatched (RangeEncoder_t *e, uint16_t *p_prob, uint32_
 // LZ {length, distance} searching algorithm
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-#define    LZ_LEN_MAX            273
-#define    LZ_DIST_MAX_PLUS1     4096
+#define    LZ_LEN_MAX                          273
+#define    LZ_DIST_MAX_PLUS1                   0xFFFFFFFF
 
-#define    DCOST_L               128
+#define    HASH_LEVEL                          10
+#define    HASH_N                              24
+#define    HASH_SIZE                           (1<<HASH_N)
+#define    HASH_MASK                           ((1<<HASH_N)-1)
 
-static void lzSearch (const uint8_t *p_src, size_t src_len, size_t pos, uint32_t rep0, uint32_t rep1, uint32_t rep2, uint32_t rep3, uint32_t *p_dist, uint32_t *p_len) {
-    uint32_t i, j, len=0, dist=0;
-    uint32_t len0=0, len1=0, len2=0, len3=0;
+#define    INVALID_HASH_ITEM                   (~((size_t)0))               // use maximum value of size_t as invalid hash entry
+
+#define    INIT_HASH_TABLE(hash_table) {            \
+    uint32_t i, j;                                  \
+    for (i=0; i<HASH_SIZE; i++)                     \
+        for (j=0; j<HASH_LEVEL; j++)                \
+            hash_table[i][j] = INVALID_HASH_ITEM;   \
+}
+
+
+static uint32_t getHash (const uint8_t *p_src, size_t src_len, size_t pos) {
+    if (pos >= src_len || pos+1 == src_len || pos+2 == src_len)
+        return 0 ;
+    else
+        return ((p_src[pos+2]<<16) + (p_src[pos+1]<<8) + p_src[pos]) & HASH_MASK;
+}
+
+
+static void updateHashTable (const uint8_t *p_src, size_t src_len, size_t pos, size_t hash_table [][HASH_LEVEL]) {
+    const uint32_t hash = getHash(p_src, src_len, pos);
+    uint32_t i, oldest_i = 0;
+    size_t   oldest_pos = INVALID_HASH_ITEM;
     
-    for (i=1; i<LZ_DIST_MAX_PLUS1 && pos>=((size_t)i); i++) {
-        const size_t ppos = pos - i;
-        
-        for (j=0; j<LZ_LEN_MAX && pos+j<src_len; j++)
-            if (p_src[pos+j] != p_src[ppos+j])
-                break;
-        
-        if (j >= 2) {
-            if (i == rep0) len0 = j;
-            if (i == rep1) len1 = j;
-            if (i == rep2) len2 = j;
-            if (i == rep3) len3 = j;
-            
-            if (j >= len+2 || (j == len+1 && i < dist * DCOST_L)) {
-                len  = j;
-                dist = i;
-            }
+    if (pos >= src_len)
+        return;
+    
+    for (i=0; i<HASH_LEVEL; i++) {
+        if (hash_table[hash][i] == INVALID_HASH_ITEM) {      // find a invalid (empty) hash item
+            hash_table[hash][i] = pos;                       // fill it
+            return;                                          // return immediently
+        }
+        if (oldest_pos > hash_table[hash][i]) {              // search the oldest hash item
+            oldest_pos = hash_table[hash][i];
+            oldest_i   = i;
         }
     }
     
-    if        (len0 >= 2 && len0+2 >= len && len0 >= len3 && len0 >= len2 && len0 >= len1) {
-        len  = len0;
-        dist = rep0;
-    } else if (len1 >= 2 && len1+2 >= len && len1 >= len3 && len1 >= len2) {
-        len  = len1;
-        dist = rep1;
-    } else if (len2 >= 2 && len2+2 >= len && len2 >= len3) {
-        len  = len2;
-        dist = rep2;
-    } else if (len3 >= 2 && len3+2 >= len) {
-        len  = len3;
-        dist = rep3;
+    hash_table[hash][oldest_i] = pos;
+}
+
+
+static uint32_t lenDistScore (uint32_t len, uint32_t dist, uint32_t rep0, uint32_t rep1, uint32_t rep2, uint32_t rep3) {
+    static const uint32_t TABLE_THRESHOLDS [] = {0xFFFFFFFF, 0x10000000, 0x800000, 0x40000, 0x2000, 0x180, 0x30, 8, 4};
+    uint32_t score;
+    
+    if (dist == rep0 || dist == rep1 || dist == rep2 || dist == rep3) {
+        score = 10;
+    } else {
+        for (score=8; score>0; score--)
+            if (dist <= TABLE_THRESHOLDS[score])
+                break;
     }
     
-    if (len < 2) {
-        if (pos >= rep0 && (p_src[pos] == p_src[pos-rep0])) {  // SHORTREP
-            len  = 1;
-            dist = rep0;
-        } else {                                               // LIT
-            len  = 0;
-            dist = 0;
+    if      (len <  2)
+        return 10;
+    else if (len == 2)
+        return score + 1;
+    else
+        return score + len;
+}
+
+
+static void lzSearch (const uint8_t *p_src, size_t src_len, size_t pos, size_t hash_table [][HASH_LEVEL], uint32_t *p_len, uint32_t *p_dist) {
+    const uint32_t len_max = ((src_len-pos) < LZ_LEN_MAX) ? (src_len-pos) : LZ_LEN_MAX;
+    const uint32_t hash = getHash(p_src, src_len, pos);
+    uint32_t i, j, len=0, dist=0xFFFFFFFF, score, nscore;
+    
+    if (pos >= src_len || pos+1 == src_len || pos+2 == src_len)
+        return;
+    
+    score = lenDistScore(len, dist, 0, 0, 0, 0);
+    
+    for (i=0; i<HASH_LEVEL; i++) {
+        size_t ppos = hash_table[hash][i];
+        if (ppos != INVALID_HASH_ITEM && ppos < pos && (pos - ppos) < LZ_DIST_MAX_PLUS1) {
+            for (j=0; j<len_max; j++)
+                if (p_src[pos+j] != p_src[ppos+j])
+                    break;
+            nscore = lenDistScore(j, (pos-ppos), 0, 0, 0, 0);
+            if (nscore > score) {
+                score = nscore;
+                len   = j;
+                dist  = pos - ppos;
+            }
         }
     }
     
@@ -258,37 +305,51 @@ static void lzSearch (const uint8_t *p_src, size_t src_len, size_t pos, uint32_t
 }
 
 
+static void lzSearchRep (const uint8_t *p_src, size_t src_len, size_t pos, uint32_t rep0, uint32_t rep1, uint32_t rep2, uint32_t rep3, uint32_t *p_len, uint32_t *p_dist) {
+    const uint32_t len_max = ((src_len-pos) < LZ_LEN_MAX) ? (src_len-pos) : LZ_LEN_MAX;
+    uint32_t reps [4];
+    uint32_t i, j, len=0, dist=0;
+    
+    reps[0] = rep0;
+    reps[1] = rep1;
+    reps[2] = rep2;
+    reps[3] = rep3;
+    
+    for (i=0; i<4; i++) {
+        if (reps[i] <= pos) {
+            size_t ppos = pos - reps[i];
+            for (j=0; j<len_max; j++)
+                if (p_src[pos+j] != p_src[ppos+j])
+                    break;
+            if (j >= 2 && j > len) {
+                len  = j;
+                dist = reps[i];
+            }
+        }
+    }
+    
+    if ( lenDistScore(len, dist, rep0, rep1, rep2, rep3) >= lenDistScore(*p_len, *p_dist, rep0, rep1, rep2, rep3) ) {
+        *p_len  = len;                                         // cancel MATCH, apply REP
+        *p_dist = dist;
+    }
+    
+    if (*p_len < 2) {
+        if (pos >= rep0 && (p_src[pos] == p_src[pos-rep0])) {  // SHORTREP
+            *p_len  = 1;
+            *p_dist = rep0;
+        } else {                                               // LIT
+            *p_len  = 0;
+            *p_dist = 0;
+        }
+    }
+}
+
+
 
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // LZMA Encoder
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-#define   N_STATES                                  12
-#define   N_LIT_STATES                              7
-
-#define   LC                                        3                  // valid range : 0~8
-#define   N_PREV_BYTE_LC_MSBS                       (1 << LC)
-#define   LC_SHIFT                                  (8 - LC)
-#define   LC_MASK                                   ((1 << LC) - 1)
-
-#define   LP                                        0                  // this version only supports LP=0
-
-#define   PB                                        4                  // valid range : 0~4
-#define   N_POS_STATES                              (1 << PB)
-#define   PB_MASK                                   ((1 << PB) - 1)
-
-#define   LCLPPB_BYTE                               ((uint8_t)( (PB * 5 + LP) * 9 + LC ))
-
-
-#define   INIT_PROBS(probs)                         {               \
-    uint32_t i;                                                     \
-    uint32_t array_size = ( sizeof(probs) / sizeof(uint16_t) );     \
-    uint16_t *array1d = (uint16_t*)(probs);                         \
-    for (i=0; i<array_size; i++)                                    \
-        array1d[i] = RANGE_CODE_HALF_PROBABILITY;                   \
-}                                                                       // all probabilities are init to 50% (half probability)
-
 
 typedef enum {          // packet_type
     PKT_LIT,
@@ -320,6 +381,34 @@ static uint8_t stateTransition (uint8_t state, PACKET_t type) {
 }
 
 
+
+#define   N_STATES                                  12
+#define   N_LIT_STATES                              7
+
+#define   LC                                        4                  // valid range : 0~8
+#define   N_PREV_BYTE_LC_MSBS                       (1 << LC)
+#define   LC_SHIFT                                  (8 - LC)
+#define   LC_MASK                                   ((1 << LC) - 1)
+
+#define   LP                                        0                  // valid range : 0~4
+#define   N_LIT_POS_STATES                          (1 << LP)
+#define   LP_MASK                                   ((1 << LP) - 1)
+
+#define   PB                                        3                  // valid range : 0~4
+#define   N_POS_STATES                              (1 << PB)
+#define   PB_MASK                                   ((1 << PB) - 1)
+
+#define   LCLPPB_BYTE                               ((uint8_t)( (PB * 5 + LP) * 9 + LC ))
+
+
+#define   INIT_PROBS(probs)                         {                  \
+    uint16_t *p = (uint16_t*)(probs);                                  \
+    uint16_t *q = p + (sizeof(probs) / sizeof(uint16_t));              \
+    for (; p<q; p++)                                                   \
+        *p = RANGE_CODE_HALF_PROBABILITY;                              \
+}                                                                       // all probabilities are init to 50% (half probability)
+
+
 static int lzmaEncode (const uint8_t *p_src, size_t src_len, uint8_t *p_dst, size_t *p_dst_len, uint8_t with_end_mark) {
     uint8_t  state = 0;                           // valid value : 0~12
     size_t   pos   = 0;                           // position of uncompressed data (p_dst)
@@ -337,7 +426,7 @@ static int lzmaEncode (const uint8_t *p_src, size_t src_len, uint8_t *p_dst, siz
     uint16_t probs_is_rep0_long [N_STATES] [N_POS_STATES] ;
     uint16_t probs_is_rep1      [N_STATES] ;
     uint16_t probs_is_rep2      [N_STATES] ;
-    uint16_t probs_literal      [N_PREV_BYTE_LC_MSBS] [3*(1<<8)];
+    uint16_t probs_literal      [N_LIT_POS_STATES] [N_PREV_BYTE_LC_MSBS] [3*(1<<8)];
     uint16_t probs_dist_slot    [4]  [(1<<6)-1];
     uint16_t probs_dist_special [10] [(1<<5)-1];
     uint16_t probs_dist_align   [(1<<4)-1];
@@ -346,6 +435,17 @@ static int lzmaEncode (const uint8_t *p_src, size_t src_len, uint8_t *p_dst, siz
     uint16_t probs_len_low      [2] [N_POS_STATES] [(1<<3)-1];
     uint16_t probs_len_mid      [2] [N_POS_STATES] [(1<<3)-1];
     uint16_t probs_len_high     [2] [(1<<8)-1];
+    
+    // size_t hash_table [HASH_SIZE][HASH_LEVEL];                                            // if HASH_LEVEL and HASH_SIZE is small, you can use this instead of malloc
+    
+    size_t (*hash_table) [HASH_LEVEL];
+    
+    hash_table = (size_t (*) [HASH_LEVEL]) malloc (sizeof(size_t) * HASH_SIZE * HASH_LEVEL); // if HASH_LEVEL and HASH_SIZE is large, we must use malloc instead of local variables to prevent stack-overflow
+    
+    if (hash_table == 0)
+        return R_ERR_MEMORY_RUNOUT;
+    
+    INIT_HASH_TABLE(hash_table);
     
     INIT_PROBS(probs_is_match);
     INIT_PROBS(probs_is_rep);
@@ -364,9 +464,10 @@ static int lzmaEncode (const uint8_t *p_src, size_t src_len, uint8_t *p_dst, siz
     INIT_PROBS(probs_len_high);
     
     while (!coder.overflow) {
-        const uint32_t pos_state = PB_MASK & (uint32_t)pos;
+        const uint32_t lit_pos_state = LP_MASK & (uint32_t)pos;
+        const uint32_t pos_state     = PB_MASK & (uint32_t)pos;
         uint32_t curr_byte=0, match_byte=0, prev_byte_lc_msbs=0;
-        uint32_t dist, len;
+        uint32_t dist=0, len=0;
         PACKET_t type;
         
         if (pos < src_len)
@@ -386,15 +487,25 @@ static int lzmaEncode (const uint8_t *p_src, size_t src_len, uint8_t *p_dst, siz
             dist = 0;                                                            // this MATCH packet's dist = 0, in next steps, we will encode dist-1 (0xFFFFFFFF), aka end marker
         
         } else {                                                                 // there are still data need to be encoded
-            lzSearch(p_src, src_len, pos, rep0, rep1, rep2, rep3, &dist, &len);
+            
+            lzSearch(p_src, src_len, pos, hash_table, &len, &dist);
+            lzSearchRep(p_src, src_len, pos, rep0, rep1, rep2, rep3, &len, &dist);
+            
+            if (pos+1 != src_len && len >= 2 && len < 50) {
+                const uint32_t score = lenDistScore(len, dist, rep0, rep1, rep2, rep3);
+                uint32_t len2=0, dist2=0;
+                lzSearch(p_src, src_len, pos+1, hash_table, &len2, &dist2);
+                lzSearchRep(p_src, src_len, pos+1, rep0, rep1, rep2, rep3, &len2, &dist2);
+                if (score+1 < lenDistScore(len2, dist2, rep0, rep1, rep2, rep3)) {
+                    len  = 0;                                                    // cancel current MATCH/REP
+                    dist = 0;
+                }
+            }
             
             if        (len == 0) {
                 type = PKT_LIT;
-            } else if (len == 1) {                                               // find a potential SHORTREP
-                if (dist == rep0)                                                // previous rep distance match its distance
-                    type = PKT_SHORTREP; 
-                else                                                             // previous rep distance cannot match its distance
-                    type = PKT_LIT;
+            } else if (len == 1) {
+                type = (dist==rep0) ? PKT_SHORTREP : PKT_LIT;
             } else if (dist == rep0) {
                 type = PKT_REP0;
             } else if (dist == rep1) {
@@ -412,17 +523,19 @@ static int lzmaEncode (const uint8_t *p_src, size_t src_len, uint8_t *p_dst, siz
                 rep2 = rep1;
                 rep1 = rep0;
                 rep0 = dist;
-            } else if (len >= 4) {                                               // find LZ, and LZ len >= 4
+            } else {
                 type = PKT_MATCH;
                 rep3 = rep2;
                 rep2 = rep1;
                 rep1 = rep0;
                 rep0 = dist;
-            } else {                                                             // when LZ len is to short that is not worth for LZ encode
-                type = PKT_LIT;                                                  // cancel it
             }
             
-            pos += (size_t)((type==PKT_LIT) ? 1 : len);
+            {
+                const size_t pos2 = pos + ((type==PKT_LIT || type==PKT_SHORTREP) ? 1 : len);
+                for (; pos<pos2; pos++)
+                    updateHashTable(p_src, src_len, pos, hash_table);
+            }
         }
         
         switch (type) {
@@ -469,9 +582,9 @@ static int lzmaEncode (const uint8_t *p_src, size_t src_len, uint8_t *p_dst, siz
         
         if (type == PKT_LIT) {
             if (state < N_LIT_STATES)
-                rangeEncodeInt(&coder, probs_literal[prev_byte_lc_msbs], curr_byte, 8);
+                rangeEncodeInt        (&coder, probs_literal[lit_pos_state][prev_byte_lc_msbs], curr_byte, 8);
             else
-                rangeEncodeByteMatched(&coder, probs_literal[prev_byte_lc_msbs], curr_byte, match_byte);
+                rangeEncodeByteMatched(&coder, probs_literal[lit_pos_state][prev_byte_lc_msbs], curr_byte, match_byte);
         }
         
         if (type == PKT_MATCH || type == PKT_REP0 || type == PKT_REP1 || type == PKT_REP2 || type == PKT_REP3) {
@@ -525,6 +638,8 @@ static int lzmaEncode (const uint8_t *p_src, size_t src_len, uint8_t *p_dst, siz
         state = stateTransition(state, type);
     }
     
+    free(hash_table);
+    
     rangeEncodeTerminate(&coder);
     
     if (coder.overflow)
@@ -573,18 +688,18 @@ static int writeLzmaHeader (uint8_t *p_dst, size_t *p_dst_len, size_t uncompress
 }
 
 
-int tinyLzmaCompress (const uint8_t *p_src, size_t src_len, uint8_t *p_dst, size_t *p_dst_len, uint8_t with_end_mark) {
+int tinyLzmaCompress (const uint8_t *p_src, size_t src_len, uint8_t *p_dst, size_t *p_dst_len) {
     size_t hdr_len, cmprs_len;
     
-    hdr_len = *p_dst_len;                                                                 // set available space for header length
+    hdr_len = *p_dst_len;                                                      // set available space for header length
     
-    RET_IF_ERROR( writeLzmaHeader(p_dst, &hdr_len, src_len, !with_end_mark) );            // if with_end_mark=0, write uncompressed_len to header
+    RET_IF_ERROR( writeLzmaHeader(p_dst, &hdr_len, src_len, 1) );              // 
     
-    cmprs_len = *p_dst_len - hdr_len;                                                     // set available space for compressed data length
+    cmprs_len = *p_dst_len - hdr_len;                                          // set available space for compressed data length
     
-    RET_IF_ERROR( lzmaEncode(p_src, src_len, p_dst+hdr_len, &cmprs_len, with_end_mark) ); // do compression
+    RET_IF_ERROR( lzmaEncode(p_src, src_len, p_dst+hdr_len, &cmprs_len, 1) );  // do compression
     
-    *p_dst_len = hdr_len + cmprs_len;                                                     // the final output data length = LZMA file header len + compressed data len
+    *p_dst_len = hdr_len + cmprs_len;                                          // the final output data length = LZMA file header len + compressed data len
     
     return R_OK;
 }
