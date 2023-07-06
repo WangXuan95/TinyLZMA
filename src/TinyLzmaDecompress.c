@@ -18,7 +18,7 @@
 
 
 #define RET_IF_ERROR(expression)  {     \
-    int res = expression;               \
+    int res = (expression);             \
     if (res != R_OK)                    \
         return res;                     \
 }

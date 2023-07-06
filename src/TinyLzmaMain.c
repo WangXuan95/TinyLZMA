@@ -4,6 +4,7 @@
 
 #include <stdlib.h>
 #include <stdio.h>
+#include <time.h>
 
 #include "FileIO.h"
 #include "TinyLzmaCompress.h"
@@ -62,7 +63,7 @@ static void removeDirectoryPathFromFileName (char *fname) {
 
 const char *USAGE =
     "  Tiny LZMA compressor & decompressor v0.2\n"
-    "  Source from https://github.com/WangXuan95/TinyLzma\n"
+    "  Source from https://github.com/WangXuan95/TinyLZMA\n"
     "\n"
     "  Usage : \n"
     "     mode1 : decompress .lzma file : \n"
@@ -175,6 +176,7 @@ int main(int argc, char **argv) {
     
     
     printf("output length    = %lu\n", dst_len);
+    printf("time consumed    = %.2f s\n", (double)clock()/CLOCKS_PER_SEC);
     
     if (saveToFile(p_dst, dst_len, fname_dst) < 0) {
         free(p_dst);

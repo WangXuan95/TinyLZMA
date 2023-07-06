@@ -208,8 +208,8 @@ static void rangeEncodeByteMatched (RangeEncoder_t *e, uint16_t *p_prob, uint32_
 #define    LZ_LEN_MAX                          273
 #define    LZ_DIST_MAX_PLUS1                   0xFFFFFFFF
 
-#define    HASH_LEVEL                          10
-#define    HASH_N                              24
+#define    HASH_LEVEL                          16
+#define    HASH_N                              21
 #define    HASH_SIZE                           (1<<HASH_N)
 #define    HASH_MASK                           ((1<<HASH_N)-1)
 
@@ -227,7 +227,11 @@ static uint32_t getHash (const uint8_t *p_src, size_t src_len, size_t pos) {
     if (pos >= src_len || pos+1 == src_len || pos+2 == src_len)
         return 0 ;
     else
+#if HASH_N < 24
         return ((p_src[pos+2]<<16) + (p_src[pos+1]<<8) + p_src[pos]) & HASH_MASK;
+#else
+        return ((p_src[pos+2]<<16) + (p_src[pos+1]<<8) + p_src[pos]);
+#endif
 }
 
 
@@ -255,65 +259,66 @@ static void updateHashTable (const uint8_t *p_src, size_t src_len, size_t pos, s
 
 
 static uint32_t lenDistScore (uint32_t len, uint32_t dist, uint32_t rep0, uint32_t rep1, uint32_t rep2, uint32_t rep3) {
-    static const uint32_t TABLE_THRESHOLDS [] = {0xFFFFFFFF, 0x10000000, 0x800000, 0x40000, 0x2000, 0x180, 0x30, 8, 4};
+    #define D 12
+    static const uint32_t TABLE_THRESHOLDS [] = {D*D*D*D*D*5, D*D*D*D*4, D*D*D*3, D*D*2, D};
     uint32_t score;
     
     if (dist == rep0 || dist == rep1 || dist == rep2 || dist == rep3) {
-        score = 10;
+        score = 5;
     } else {
-        for (score=8; score>0; score--)
+        for (score=4; score>0; score--)
             if (dist <= TABLE_THRESHOLDS[score])
                 break;
     }
     
     if      (len <  2)
-        return 10;
+        return 8 + 5;
     else if (len == 2)
-        return score + 1;
+        return 8 + score + 1;
     else
-        return score + len;
+        return 8 + score + len;
 }
 
 
-static void lzSearch (const uint8_t *p_src, size_t src_len, size_t pos, size_t hash_table [][HASH_LEVEL], uint32_t *p_len, uint32_t *p_dist) {
+static void lzSearchMatch (const uint8_t *p_src, size_t src_len, size_t pos, size_t hash_table [][HASH_LEVEL], uint32_t *p_len, uint32_t *p_dist) {
     const uint32_t len_max = ((src_len-pos) < LZ_LEN_MAX) ? (src_len-pos) : LZ_LEN_MAX;
     const uint32_t hash = getHash(p_src, src_len, pos);
-    uint32_t i, j, len=0, dist=0xFFFFFFFF, score, nscore;
+    uint32_t i, j, score1, score2;
     
-    if (pos >= src_len || pos+1 == src_len || pos+2 == src_len)
-        return;
+    *p_len  = 0;
+    *p_dist = 0;
     
-    score = lenDistScore(len, dist, 0, 0, 0, 0);
+    score1 = lenDistScore(0, 0xFFFFFFFF, 0, 0, 0, 0);
     
-    for (i=0; i<HASH_LEVEL; i++) {
-        size_t ppos = hash_table[hash][i];
+    for (i=0; i<HASH_LEVEL+2; i++) {
+        size_t ppos = (i<HASH_LEVEL) ? hash_table[hash][i] : (pos-1-(i-HASH_LEVEL));
         if (ppos != INVALID_HASH_ITEM && ppos < pos && (pos - ppos) < LZ_DIST_MAX_PLUS1) {
             for (j=0; j<len_max; j++)
                 if (p_src[pos+j] != p_src[ppos+j])
                     break;
-            nscore = lenDistScore(j, (pos-ppos), 0, 0, 0, 0);
-            if (nscore > score) {
-                score = nscore;
-                len   = j;
-                dist  = pos - ppos;
+            score2 = lenDistScore(j, (pos-ppos), 0, 0, 0, 0);
+            if (j >= 2 && score1 < score2) {
+                score1  = score2;
+                *p_len  = j;
+                *p_dist = pos - ppos;
             }
         }
     }
-    
-    *p_len  = len;
-    *p_dist = dist;
 }
 
 
-static void lzSearchRep (const uint8_t *p_src, size_t src_len, size_t pos, uint32_t rep0, uint32_t rep1, uint32_t rep2, uint32_t rep3, uint32_t *p_len, uint32_t *p_dist) {
-    const uint32_t len_max = ((src_len-pos) < LZ_LEN_MAX) ? (src_len-pos) : LZ_LEN_MAX;
+static void lzSearchRep (const uint8_t *p_src, size_t src_len, size_t pos, uint32_t rep0, uint32_t rep1, uint32_t rep2, uint32_t rep3, uint32_t len_limit, uint32_t *p_len, uint32_t *p_dist) {
+    uint32_t len_max = ((src_len-pos) < LZ_LEN_MAX) ? (src_len-pos) : LZ_LEN_MAX;
     uint32_t reps [4];
-    uint32_t i, j, len=0, dist=0;
+    uint32_t i, j;
     
-    reps[0] = rep0;
-    reps[1] = rep1;
-    reps[2] = rep2;
-    reps[3] = rep3;
+    if (len_max > len_limit)
+        len_max = len_limit;
+    
+    reps[0] = rep0;   reps[1] = rep1;   reps[2] = rep2;   reps[3] = rep3;
+    
+    *p_len  = 0;
+    *p_dist = 0;
     
     for (i=0; i<4; i++) {
         if (reps[i] <= pos) {
@@ -321,27 +326,34 @@ static void lzSearchRep (const uint8_t *p_src, size_t src_len, size_t pos, uint3
             for (j=0; j<len_max; j++)
                 if (p_src[pos+j] != p_src[ppos+j])
                     break;
-            if (j >= 2 && j > len) {
-                len  = j;
-                dist = reps[i];
+            if (j >= 2 && j > *p_len) {
+                *p_len  = j;
+                *p_dist = reps[i];
             }
         }
     }
+}
+
+
+static void lzSearch (const uint8_t *p_src, size_t src_len, size_t pos, uint32_t rep0, uint32_t rep1, uint32_t rep2, uint32_t rep3, size_t hash_table [][HASH_LEVEL], uint32_t *p_len, uint32_t *p_dist) {
+    uint32_t rlen, rdist;
+    uint32_t mlen, mdist;
     
-    if ( lenDistScore(len, dist, rep0, rep1, rep2, rep3) >= lenDistScore(*p_len, *p_dist, rep0, rep1, rep2, rep3) ) {
-        *p_len  = len;                                         // cancel MATCH, apply REP
-        *p_dist = dist;
-    }
+    lzSearchRep(p_src, src_len, pos, rep0, rep1, rep2, rep3, 0xFFFFFFFF, &rlen, &rdist);
+    lzSearchMatch(p_src, src_len, pos, hash_table, &mlen, &mdist);
     
-    if (*p_len < 2) {
-        if (pos >= rep0 && (p_src[pos] == p_src[pos-rep0])) {  // SHORTREP
-            *p_len  = 1;
-            *p_dist = rep0;
-        } else {                                               // LIT
-            *p_len  = 0;
-            *p_dist = 0;
-        }
+    if ( lenDistScore(rlen, rdist, rep0, rep1, rep2, rep3) >= lenDistScore(mlen, mdist, rep0, rep1, rep2, rep3) ) {
+        *p_len  = rlen;
+        *p_dist = rdist;
+    } else {
+        *p_len  = mlen;
+        *p_dist = mdist;
     }
+}
+
+
+static uint8_t isShortRep (const uint8_t *p_src, size_t src_len, size_t pos, uint32_t rep0) {
+    return (pos >= rep0 && (p_src[pos] == p_src[pos-rep0])) ? 1 : 0;
 }
 
 
@@ -416,6 +428,7 @@ static int lzmaEncode (const uint8_t *p_src, size_t src_len, uint8_t *p_dst, siz
     uint32_t rep1  = 1;
     uint32_t rep2  = 1;
     uint32_t rep3  = 1;
+    uint32_t n_bypass=0, len_bypass=0, dist_bypass=0;
     
     RangeEncoder_t coder = newRangeEncoder(p_dst, *p_dst_len);
     
@@ -487,25 +500,50 @@ static int lzmaEncode (const uint8_t *p_src, size_t src_len, uint8_t *p_dst, siz
             dist = 0;                                                            // this MATCH packet's dist = 0, in next steps, we will encode dist-1 (0xFFFFFFFF), aka end marker
         
         } else {                                                                 // there are still data need to be encoded
-            
-            lzSearch(p_src, src_len, pos, hash_table, &len, &dist);
-            lzSearchRep(p_src, src_len, pos, rep0, rep1, rep2, rep3, &len, &dist);
-            
-            if (pos+1 != src_len && len >= 2 && len < 50) {
-                const uint32_t score = lenDistScore(len, dist, rep0, rep1, rep2, rep3);
-                uint32_t len2=0, dist2=0;
-                lzSearch(p_src, src_len, pos+1, hash_table, &len2, &dist2);
-                lzSearchRep(p_src, src_len, pos+1, rep0, rep1, rep2, rep3, &len2, &dist2);
-                if (score+1 < lenDistScore(len2, dist2, rep0, rep1, rep2, rep3)) {
-                    len  = 0;                                                    // cancel current MATCH/REP
-                    dist = 0;
+            if (n_bypass > 0) {
+                len  = 0;
+                dist = 0;
+                n_bypass --;
+            } else if (len_bypass > 0) {
+                len  = len_bypass;
+                dist = dist_bypass;
+                len_bypass  = 0;
+                dist_bypass = 0;
+            } else {
+                lzSearch(p_src, src_len, pos, rep0, rep1, rep2, rep3, hash_table, &len, &dist);
+                
+                if ((src_len-pos)>8 && len>=2) {
+                    const uint32_t score0 = lenDistScore(len, dist, rep0, rep1, rep2, rep3);
+                    uint32_t len1=0, dist1=0, score1=0;
+                    uint32_t len2=0, dist2=0, score2=0;
+                    
+                    lzSearch(p_src, src_len, pos+1, rep0, rep1, rep2, rep3, hash_table, &len1, &dist1);
+                    score1 = lenDistScore(len1, dist1, rep0, rep1, rep2, rep3);
+                    
+                    if (len >= 3) {
+                        lzSearch(p_src, src_len, pos+2, rep0, rep1, rep2, rep3, hash_table, &len2, &dist2);
+                        score2 = lenDistScore(len2, dist2, rep0, rep1, rep2, rep3) - 1;
+                    }
+                    
+                    if (score2 > score0 && score2 > score1) {
+                        len  = 0;
+                        dist = 0;
+                        lzSearchRep(p_src, src_len, pos, rep0, rep1, rep2, rep3, 2, &len, &dist);
+                        len_bypass  = len2;
+                        dist_bypass = dist2;
+                        n_bypass = (len<2) ? 1 : 0;
+                    } else if (score1 > score0) {
+                        len  = 0;
+                        dist = 0;
+                        len_bypass  = len1;
+                        dist_bypass = dist1;
+                        n_bypass = 0;
+                    }
                 }
             }
             
-            if        (len == 0) {
-                type = PKT_LIT;
-            } else if (len == 1) {
-                type = (dist==rep0) ? PKT_SHORTREP : PKT_LIT;
+            if        (len <  2) {
+                type = isShortRep(p_src, src_len, pos, rep0) ? PKT_SHORTREP : PKT_LIT;
             } else if (dist == rep0) {
                 type = PKT_REP0;
             } else if (dist == rep1) {
