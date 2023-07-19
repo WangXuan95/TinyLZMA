@@ -131,6 +131,7 @@ static void rangeEncodeTerminate (RangeEncoder_t *e) {
     rangeEncodeNormalize(e);
     rangeEncodeNormalize(e);
     rangeEncodeNormalize(e);
+    rangeEncodeNormalize(e);
 }
 
 
@@ -206,7 +207,8 @@ static void rangeEncodeByteMatched (RangeEncoder_t *e, uint16_t *p_prob, uint32_
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #define    LZ_LEN_MAX                          273
-#define    LZ_DIST_MAX_PLUS1                   0xFFFFFFFF
+//#define    LZ_DIST_MAX_PLUS1                   0xFFFFFFFF
+#define    LZ_DIST_MAX_PLUS1                   0x10000000
 
 #define    HASH_LEVEL                          16
 #define    HASH_N                              21
