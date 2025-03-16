@@ -1,25 +1,34 @@
  ![language](https://img.shields.io/badge/language-C-green.svg) ![build](https://img.shields.io/badge/build-Windows-blue.svg) ![build](https://img.shields.io/badge/build-linux-FF1010.svg)
 
-TinyLZMA
+TinyZZZ
 ===========================
 
-A minimal LZMA data compressor & decompressor. Only hundreds of lines of C.
+TinyZZZ is a simple, standalone data compressor/decompressor which supports several popular data compression algorithms, including GZIP, ZSTD, and LZMA. These algorithms are written in C language, unlike the official code implementation, this code mainly focuses on simplicity and easy to understand.
+
+TinyZZZ currently supports:
+  - GZIP compress: compress a file into a ".gz" file
+  - ZSTD decompress: decompress a ".zst" file to a file
+  - LZMA decompress: decompress a ".lzma" file to a file
+  - LZMA compress: compress a file into a ".lzma" file
+  - LZMA compress: compress a file into a ".zip" file (compress method=LZMA)
 
 　
 
-LZMA is a lossless data compression method with a higher compression ratio than Deflate and BZIP. Several container formats supports LZMA:
+### About GZIP
+
+GZIP is an old lossless data compression algorithm which has excellent compatibility. The file name suffix of compressed GZIP file is ".gz"
+
+### About ZSTD
+
+ZSTD (Zstandard) is an new lossless data compression algorithm with high compression ratio and high decompression speed. The file name suffix of compressed ZSTD file is ".zstd"
+
+### About LZMA
+
+LZMA is a lossless data compression algorithm with higher compression ratio than GZIP, BZIP, and ZSTD. Several archive container formats supports LZMA:
 
 - ".7z" and ".xz" format, whose default compression method is LZMA.
 - ".zip" format also supports LZMA, although its default compression method is Deflate.
 - ".lzma" is a very simple format for containing LZMA, which is legacy and gradually replaced by ".xz" format.
-
-　
-
-**This code, TinyLZMA, supports 3 modes**:
-
-- compress a file into a ".zip" file (compress method=LZMA)
-- compress a file into a ".lzma" file
-- decompress a ".lzma" file
 
 　
 
@@ -30,10 +39,10 @@ LZMA is a lossless data compression method with a higher compression ratio than 
 On Linux, run command:
 
 ```bash
-gcc src/*.c -static-libgcc -static-libstdc++ -O3 -Wall -o tlzma
+gcc src/*.c src/GZIP/*.c src/ZSTD/*.c src/LZMA/*.c -O2 -Wall -o tinyZZZ
 ```
 
-The output Linux binary file is [tlzma](./tlzma)
+The output Linux binary file is [tinyZZZ](./tinyZZZ)
 
 　
 
@@ -44,10 +53,10 @@ The output Linux binary file is [tlzma](./tlzma)
 If you installed MinGW in Windows, run command to compile:
 
 ```powershell
-gcc src\*.c -static-libgcc -static-libstdc++ -O3 -Wall -o tlzma.exe
+gcc src\*.c src\GZIP\*.c src\ZSTD\*.c src\LZMA\*.c -O2 -Wall -o tinyZZZ.exe
 ```
 
-The output executable file is [tlzma.exe](./tlzma.exe)
+The output executable file is [tinyZZZ.exe](./tinyZZZ.exe)
 
 　
 
@@ -55,65 +64,54 @@ The output executable file is [tlzma.exe](./tlzma.exe)
 
 ## Usage
 
-Run TinyLZMA to show usage:
+Run TinyZZZ to show usage:
 
 ```
-└─$ ./tlzma
-|-----------------------------------------------------------------|
-|  Tiny LZMA compressor & decompressor v0.2                       |
-|  Source from https://github.com/WangXuan95/TinyLZMA             |
-|-----------------------------------------------------------------|
-|  Usage :                                                        |
-|     mode1 : decompress .lzma file :                             |
-|       tlzma  <input_file(.lzma)>  <output_file>                 |
-|                                                                 |
-|     mode2 : compress a file to .lzma file :                     |
-|       tlzma  <input_file>  <output_file(.lzma)>                 |
-|                                                                 |
-|     mode3 : compress a file to .zip file (use lzma algorithm) : |
-|       tlzma  <input_file>  <output_file(.zip)>                  |
-|-----------------------------------------------------------------|
+└─$ ./tinyZZZ
+|----------------------------------------------------------------------|
+|  Usage :                                                             |
+|   1. decompress a GZIP file                                          |
+|        (not yet supported!)                                          |
+|   2. compress a file to GZIP file                                    |
+|        tinyZZZ.exe -c --gzip <input_file> <output_file(.gz)>         |
+|   3. decompress a ZSTD file                                          |
+|        tinyZZZ.exe -d --zstd <input_file(.zst)> <output_file>        |
+|   4. compress a file to ZSTD file                                    |
+|        (not yet supported!)                                          |
+|   5. decompress a LZMA file                                          |
+|        tinyZZZ.exe -d --lzma <input_file(.lzma)> <output_file>       |
+|   6. compress a file to LZMA file                                    |
+|        tinyZZZ.exe -c --lzma <input_file> <output_file(.lzma)>       |
+|   7. compress a file to LZMA and pack to a .zip container file       |
+|        tinyZZZ.exe -c --lzma --zip <input_file> <output_file(.zip)>  |
+|----------------------------------------------------------------------|
 ```
 
 　
 
 ### Example Usage
 
-**Example of mode3**: You can compress the file `data3.txt` in directory `testdata` to `data3.txt.zip` using command:
+**Example1**: compress the file `data3.txt` in directory `testdata` to `data3.zip` using command:
 
 ```bash
-./tlzma testdata/data3.txt data3.txt.zip
+./tinyZZZ -c --lzma --zip testdata/data3.txt data3.zip
 ```
 
 The outputting ".zip" file can be extracted by other compression software, such as [7ZIP](https://www.7-zip.org), WinZip, WinRAR, etc.
 
-**Example of mode2**: You can use following command to compress a file to a ".lzma" file :
+**Example2**: Use following command to compress a file to a ".lzma" file :
 
 ```bash
-./tlzma testdata/data3.txt data3.txt.lzma
+./tinyZZZ -c --lzma testdata/data3.txt data3.txt.lzma
 ```
 
-Besides TinyLZMA itself, you can use other LZMA official softwares to decompress ".lzma" file. See [How to decompress .lzma file](#dec_en)
+Besides TinyZZZ itself, you can use other LZMA official softwares to decompress ".lzma" file. See [How to decompress .lzma file](#dec_en)
 
 **Example of mode1**: You can use following command to decompress a ".lzma" file :
 
 ```bash
-./tlzma data3.txt.lzma data3.txt
+./tinyZZZ -d --lzma data3.txt.lzma data3.txt
 ```
-
-　
-
-　
-
-## Notice
-
-- TinyLZMA is verified on hundreds of files using automatic scripts.
-- To be simpler, TinyLZMA loads the whole file data to memory to perform compresses/decompresses, so it is limited by memory capacity and cannot handle files that are too large.
-- The search strategy of TinyLZMA's compressor is a simple hash-chain.
-- The compression ratio of TinyLZMA's compressor is mostly like the `-1` to `-4` level of XZ-Utils's LZMA compressor [2]. 
-- The performance of TinyLZMA's compressor is mostly like the `-2` level of XZ-Utils's LZMA compressor. 
-
-> :point_right: XZ-Utils's LZMA compressor has a total of 10 levels, from `-0` to `-9` . The larger, the higher the compression ratio, but the lower the performance. For example, if you want to use XZ-Utils to compress "a.txt" to "a.txt.lzma" using level 4, the command should be `lzma -zk -4 a.txt`
 
 　
 
@@ -153,15 +151,32 @@ It may report a error : *"ERROR: There are some data after the end of the payloa
 
 ## Related Links
 
+The specification of GZIP:
+
+- https://www.rfc-editor.org/rfc/rfc1951
+- https://www.rfc-editor.org/rfc/rfc1952
+
+The specification of ZSTD:
+
+- https://www.rfc-editor.org/rfc/rfc8878
+
+The official code of ZSTD:
+
+- https://github.com/facebook/zstd
+
 The official code of LZMA & 7ZIP & XZ:
 
-- [1]  https://www.7-zip.org/sdk.html
-- [2]  https://tukaani.org/xz/
+- https://www.7-zip.org/sdk.html
+- https://tukaani.org/xz/
 
-To quickly understand the algorithm of LZMA, see:
+To quickly understand the algorithm of LZMA algorithm, see:
 
-- [3]  wikipedia : https://en.wikipedia.org/wiki/Lempel%E2%80%93Ziv%E2%80%93Markov_chain_algorithm
+- wikipedia : https://en.wikipedia.org/wiki/Lempel%E2%80%93Ziv%E2%80%93Markov_chain_algorithm
 
-An FPGA-based hardware data compressor:
+An FPGA-based hardware GZIP data compressor:
 
-- [4]  FPGA-LZMA-compressor : https://github.com/WangXuan95/FPGA-LZMA-compressor
+- FPGA-GZIP-compressor : https://github.com/WangXuan95/FPGA-Gzip-compressor
+
+An FPGA-based hardware LZMA data compressor:
+
+- FPGA-LZMA-compressor : https://github.com/WangXuan95/FPGA-LZMA-compressor

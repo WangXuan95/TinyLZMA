@@ -44,7 +44,7 @@ uint8_t *loadFromFile (size_t *p_len, const char *filename) {
         return p_buf;                    // directly return it without filling any data
     }
     
-    p_buf = (uint8_t*)malloc((*p_len));
+    p_buf = (uint8_t*)malloc((*p_len) + 65536);
     
     if (p_buf == NULL) {
         fclose(fp);
