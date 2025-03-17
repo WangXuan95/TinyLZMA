@@ -232,27 +232,25 @@ static void ST_write_byte (ostream_t *stream, u8 symb) {
 
 
 /******* HUFFMAN PRIMITIVES ***************************************************/
-static size_t HUF_decompress_1stream (istream_t *in, ostream_t *out, HUF_dtable *dtable) {
+static void HUF_decompress_1stream (istream_t *in, u8 **pp_out, HUF_dtable *dtable) {
     if (in->len == 0) {
         ERROR_IN_SIZE();
     }
     ST_backward_prepare(in);
     i32 shift_bits = ST_backward_read_bits(in, ((u8)dtable->max_bits));
-    size_t n_bytes;
-    for (n_bytes=0; (in->bit_offset>(-dtable->max_bits)); n_bytes++) {
-        ST_write_byte(out, dtable->symbols[shift_bits]);   // `shift_bits` 中存放的是移位读取到的数据，其bit位数为 `max_bits` ，高位较旧，低位较新。查询 symbols 数组会根据高位来判断当前要解码出的数据是什么。
+    while (in->bit_offset > (-dtable->max_bits)) {
+        *((*pp_out)++) = dtable->symbols[shift_bits]; // `shift_bits` 中存放的是移位读取到的数据，其bit位数为 `max_bits` ，高位较旧，低位较新。查询 symbols 数组会根据高位来判断当前要解码出的数据是什么。
         u8 bits = dtable->num_bits[shift_bits];
         i32 rest = ST_backward_read_bits(in, bits);
-        shift_bits = ((shift_bits << bits) + rest);        // Shift `bits` bits out of the shift_bits, keeping the low order bits that weren't necessary to determine this symbol.
-        shift_bits &= ((1 << dtable->max_bits) - 1);       // keep shift_bits do not exceed `max_bits` bits
+        shift_bits = ((shift_bits << bits) + rest);   // Shift `bits` bits out of the shift_bits, keeping the low order bits that weren't necessary to determine this symbol.
+        shift_bits &= ((1 << dtable->max_bits) - 1);  // keep shift_bits do not exceed `max_bits` bits
     }
     if (in->bit_offset != -dtable->max_bits) {
         ERROR_CORRUPT();
     }
-    return n_bytes;
 }
 
-static size_t HUF_decompress_4stream (istream_t *in, ostream_t *out, HUF_dtable *dtable) {
+static void HUF_decompress_4stream (istream_t *in, u8 **pp_out, HUF_dtable *dtable) {
     size_t csize1 = ST_forward_read_bits(in, 16);
     size_t csize2 = ST_forward_read_bits(in, 16);
     size_t csize3 = ST_forward_read_bits(in, 16);
@@ -262,12 +260,10 @@ static size_t HUF_decompress_4stream (istream_t *in, ostream_t *out, HUF_dtable 
     istream_t in3 = ST_forward_fork_sub(in, csize3);
     istream_t in4 = ST_forward_fork_sub(in, in->len);
 
-    size_t n_bytes = 0;
-    n_bytes += HUF_decompress_1stream(&in1, out, dtable);
-    n_bytes += HUF_decompress_1stream(&in2, out, dtable);
-    n_bytes += HUF_decompress_1stream(&in3, out, dtable);
-    n_bytes += HUF_decompress_1stream(&in4, out, dtable);
-    return n_bytes;
+    HUF_decompress_1stream(&in1, pp_out, dtable);
+    HUF_decompress_1stream(&in2, pp_out, dtable);
+    HUF_decompress_1stream(&in3, pp_out, dtable);
+    HUF_decompress_1stream(&in4, pp_out, dtable);
 }
 
 /// Initializes a Huffman table using canonical Huffman codes. Codes within a level are allocated in symbol order (i.e. smaller symbols get earlier codes)
@@ -838,11 +834,10 @@ static size_t decode_literals_compressed (istream_t *in, u8 **literals, frame_co
         ERROR_CORRUPT();
     }
 
-    if (!(*literals = malloc(regenerated_size))) {
+    if (!(*literals = malloc(regenerated_size+32))) {
         ERROR_MALLOC();
     }
-
-    ostream_t lit_stream = ST_new(*literals, regenerated_size);
+    
     istream_t huf_stream = ST_forward_fork_sub(in, compressed_size);
 
     if (block_type == 2) {
@@ -852,14 +847,14 @@ static size_t decode_literals_compressed (istream_t *in, u8 **literals, frame_co
         ERROR_CORRUPT();
     }
 
-    size_t symbols_decoded;
+    u8 *p_lit = *literals;
     if (stream_x1) {
-        symbols_decoded = HUF_decompress_1stream(&huf_stream, &lit_stream, &ctx->literals_dtable);
+        HUF_decompress_1stream(&huf_stream, &p_lit, &ctx->literals_dtable);
     } else {
-        symbols_decoded = HUF_decompress_4stream(&huf_stream, &lit_stream, &ctx->literals_dtable);
+        HUF_decompress_4stream(&huf_stream, &p_lit, &ctx->literals_dtable);
     }
 
-    if (symbols_decoded != regenerated_size) {
+    if ((p_lit-(*literals)) != regenerated_size) {
         ERROR_CORRUPT();
     }
 
