@@ -70,7 +70,7 @@ int main (int argc, char **argv) {
 
     char    *fname_src=NULL, *fname_dst=NULL;
     uint8_t *p_src         , *p_dst;
-    size_t   src_len       ,  dst_len        , MAX_DST_LEN=0x20000000;
+    size_t   src_len       ,  dst_len        , MAX_DST_LEN=0x80000000;
 
 
     // parse command line --------------------------------------------------------------------------------------------------

@@ -9,18 +9,21 @@
 #include "TinyZstdDecompress.h"
 
 
-#define ZSTD_MAGIC_NUMBER 0xFD2FB528U
-#define ZSTD_BLOCK_SIZE_MAX ((size_t)128 * 1024)  // The size of `Block_Content` is limited by `Block_Maximum_Size`,
-#define MAX_LITERALS_SIZE ZSTD_BLOCK_SIZE_MAX     // literal blocks can't be larger than their block
+#define ZSTD_MAGIC_NUMBER     0xFD2FB528U
+#define ZSTD_BLOCK_SIZE_MAX   ((size_t)128 * 1024)  // The size of `Block_Content` is limited by `Block_Maximum_Size`,
+#define MAX_LITERALS_SIZE     ZSTD_BLOCK_SIZE_MAX   // literal blocks can't be larger than their block
+#define MAX_SEQ_SIZE          (0x18000)
 
 /// This decoder calls exit(1) when it encounters an error, however a production library should propagate error codes
-#define ERROR(s)          do { fprintf(stderr, "Error: %s\n", s); exit(1); } while (0)
+#define ERROR(s)          { fprintf((stderr), "Error: %s\n", (s)); exit(1); }
 #define ERROR_IN_SIZE()   ERROR("Input buffer smaller than it should be or input is corrupted")
 #define ERROR_OUT_SIZE()  ERROR("Output buffer too small for output")
 #define ERROR_CORRUPT()   ERROR("Corruption detected while decompressing")
 #define ERROR_MALLOC()    ERROR("Memory allocation error")
+#define ERROR_IF_MALLOC_FAIL(ptr) { if (!(ptr)) {ERROR_MALLOC()} }
 
 typedef uint8_t  u8;
+typedef uint16_t u16;
 typedef int32_t  i32;
 typedef uint64_t u64;
 
@@ -34,6 +37,7 @@ typedef struct {
 
 #define ostream_t istream_t  // 输出流类型实际上与输入流一模一样，区别在于并没有用到 bit_offset，都是整字节寻址
 
+#define HUF_TABLE_LENGTH      (1<<13)
 #define HUF_MAX_BITS          (16)
 #define HUF_MAX_SYMBS         (256)
 #define FSE_MAX_ACCURACY_LOG  (15)
@@ -43,16 +47,11 @@ typedef struct {
 #define MAX_CODE_MAT_LEN      (52)
 
 typedef struct {
-    u8 *symbols;
-    u8 *num_bits;
-    i32 max_bits;
-} HUF_dtable;
-
-typedef struct {
-    u8  *symbols;
-    u8  *num_bits;
-    i32 *new_state_base;
-    i32  accuracy_log;
+    u8  table      [(1U<<FSE_MAX_ACCURACY_LOG)];
+    u8  n_bits     [(1U<<FSE_MAX_ACCURACY_LOG)];
+    u16 state_base [(1U<<FSE_MAX_ACCURACY_LOG)];
+    i32 accuracy_log;
+    u8  exist;
 } FSE_dtable;
 
 /// The context needed to decode blocks in a frame
@@ -66,8 +65,13 @@ typedef struct {
     i32 content_checksum_flag;   // 1-bit, Whether or not the content of this frame has a checksum
     i32 single_segment_flag;     // 1-bit, Whether or not the output for this frame is in a single segment
 
-    // 同一个frame内跨block复用的huffman编码表和fse编码表
-    HUF_dtable literals_dtable;
+    // 同一个frame内跨block复用的huffman解码表
+    u8  huf_table  [HUF_TABLE_LENGTH];
+    u8  huf_n_bits [HUF_TABLE_LENGTH];
+    i32 huf_max_bits;
+    u8  huf_table_exist;
+
+    // 同一个frame内跨block复用的fse解码表
     FSE_dtable ll_dtable;
     FSE_dtable ml_dtable;
     FSE_dtable of_dtable;
@@ -232,25 +236,25 @@ static void ST_write_byte (ostream_t *stream, u8 symb) {
 
 
 /******* HUFFMAN PRIMITIVES ***************************************************/
-static void HUF_decompress_1stream (istream_t *in, u8 **pp_out, HUF_dtable *dtable) {
+static void HUF_decompress_1stream (istream_t *in, u8 **pp_out, frame_context_t *p_ctx) {
     if (in->len == 0) {
         ERROR_IN_SIZE();
     }
     ST_backward_prepare(in);
-    i32 shift_bits = ST_backward_read_bits(in, ((u8)dtable->max_bits));
-    while (in->bit_offset > (-dtable->max_bits)) {
-        *((*pp_out)++) = dtable->symbols[shift_bits]; // `shift_bits` 中存放的是移位读取到的数据，其bit位数为 `max_bits` ，高位较旧，低位较新。查询 symbols 数组会根据高位来判断当前要解码出的数据是什么。
-        u8 bits = dtable->num_bits[shift_bits];
+    i32 shift_bits = ST_backward_read_bits(in, ((u8)p_ctx->huf_max_bits));
+    while (in->bit_offset > (-p_ctx->huf_max_bits)) {
+        *((*pp_out)++) = p_ctx->huf_table[shift_bits]; // `shift_bits` 中存放的是移位读取到的数据，其bit位数为 `max_bits` ，高位较旧，低位较新。查询 symbols 数组会根据高位来判断当前要解码出的数据是什么。
+        u8 bits = p_ctx->huf_n_bits[shift_bits];
         i32 rest = ST_backward_read_bits(in, bits);
-        shift_bits = ((shift_bits << bits) + rest);   // Shift `bits` bits out of the shift_bits, keeping the low order bits that weren't necessary to determine this symbol.
-        shift_bits &= ((1 << dtable->max_bits) - 1);  // keep shift_bits do not exceed `max_bits` bits
+        shift_bits = ((shift_bits << bits) + rest);    // Shift `bits` bits out of the shift_bits, keeping the low order bits that weren't necessary to determine this symbol.
+        shift_bits &= ((1 << p_ctx->huf_max_bits) - 1);  // keep shift_bits do not exceed `max_bits` bits
     }
-    if (in->bit_offset != -dtable->max_bits) {
+    if (in->bit_offset != -p_ctx->huf_max_bits) {
         ERROR_CORRUPT();
     }
 }
 
-static void HUF_decompress_4stream (istream_t *in, u8 **pp_out, HUF_dtable *dtable) {
+static void HUF_decompress_4stream (istream_t *in, u8 **pp_out, frame_context_t *p_ctx) {
     size_t csize1 = ST_forward_read_bits(in, 16);
     size_t csize2 = ST_forward_read_bits(in, 16);
     size_t csize3 = ST_forward_read_bits(in, 16);
@@ -260,16 +264,15 @@ static void HUF_decompress_4stream (istream_t *in, u8 **pp_out, HUF_dtable *dtab
     istream_t in3 = ST_forward_fork_sub(in, csize3);
     istream_t in4 = ST_forward_fork_sub(in, in->len);
 
-    HUF_decompress_1stream(&in1, pp_out, dtable);
-    HUF_decompress_1stream(&in2, pp_out, dtable);
-    HUF_decompress_1stream(&in3, pp_out, dtable);
-    HUF_decompress_1stream(&in4, pp_out, dtable);
+    HUF_decompress_1stream(&in1, pp_out, p_ctx);
+    HUF_decompress_1stream(&in2, pp_out, p_ctx);
+    HUF_decompress_1stream(&in3, pp_out, p_ctx);
+    HUF_decompress_1stream(&in4, pp_out, p_ctx);
 }
 
 /// Initializes a Huffman table using canonical Huffman codes. Codes within a level are allocated in symbol order (i.e. smaller symbols get earlier codes)
 /// For more explanation on canonical Huffman codes see https://www.cs.scranton.edu/~mccloske/courses/cmps340/huff_canonical_dec2015.html
-static void HUF_init_dtable (HUF_dtable *table, u8 *bits, i32 num_symbs) {
-    memset(table, 0, sizeof(HUF_dtable));
+static void HUF_init_dtable (frame_context_t *p_ctx, u8 *bits, i32 num_symbs) {
     if (num_symbs > HUF_MAX_SYMBS) {
         ERROR("Too many symbols for Huffman");
     }
@@ -289,15 +292,9 @@ static void HUF_init_dtable (HUF_dtable *table, u8 *bits, i32 num_symbs) {
         }
     }
 
-    table->max_bits = max_bits;
-    table->symbols  = malloc(1 << max_bits);
-    table->num_bits = malloc(1 << max_bits);
-
-    if (!table->symbols || !table->num_bits) {
-        free(table->symbols);
-        free(table->num_bits);
-        ERROR_MALLOC();
-    }
+    p_ctx->huf_max_bits = max_bits;
+    memset(p_ctx->huf_table , 0, sizeof(p_ctx->huf_table [0])*HUF_TABLE_LENGTH);
+    memset(p_ctx->huf_n_bits, 0, sizeof(p_ctx->huf_n_bits[0])*HUF_TABLE_LENGTH);
 
     // "Symbols are sorted by Weight. Within same Weight, symbols keep natural order. 
     // Symbols with a Weight of zero are removed. Then, starting from lowest weight, prefix codes are distributed in order."
@@ -308,7 +305,7 @@ static void HUF_init_dtable (HUF_dtable *table, u8 *bits, i32 num_symbs) {
     for (i32 i = max_bits; i >= 1; i--) {
         rank_idx[i - 1] = rank_idx[i] + rank_count[i] * (1 << (max_bits - i));
         // The entire range takes the same number of bits so we can memset it
-        memset(&table->num_bits[rank_idx[i]], i, rank_idx[i - 1] - rank_idx[i]);
+        memset(&p_ctx->huf_n_bits[rank_idx[i]], i, rank_idx[i - 1] - rank_idx[i]);
     }
 
     if (rank_idx[0] != (1 << max_bits)) {
@@ -322,16 +319,10 @@ static void HUF_init_dtable (HUF_dtable *table, u8 *bits, i32 num_symbs) {
             i32 code = rank_idx[bits[i]];
             // Since the code doesn't care about the bottom `max_bits - bits[i]` bits of state, it gets a range that spans all possible values of the lower bits
             i32 len = 1 << (max_bits - bits[i]);
-            memset(&table->symbols[code], i, len);
+            memset(&p_ctx->huf_table[code], i, len);
             rank_idx[bits[i]] += len;
         }
     }
-}
-
-static void HUF_free_dtable(HUF_dtable * dtable) {
-    free(dtable->symbols);
-    free(dtable->num_bits);
-    memset(dtable, 0, sizeof(HUF_dtable));
 }
 /******* END HUFFMAN PRIMITIVES ***********************************************/
 
@@ -350,22 +341,19 @@ static size_t FSE_decompress_interleaved2 (istream_t* in, ostream_t* out, FSE_dt
     i32 state1 = ST_backward_read_bits(in, ((u8)dtable->accuracy_log));
     i32 state2 = ST_backward_read_bits(in, ((u8)dtable->accuracy_log));
 
-    for (size_t n_bytes = 0 ; ; ) { // Decode until we overflow the stream Since we decode in reverse order, overflowing the stream is offset going negative
-        ST_write_byte(out, dtable->symbols[state1]);
-        n_bytes ++;
-        state1 = dtable->new_state_base[state1] + ST_backward_read_bits(in, dtable->num_bits[state1]);
-        if (in->bit_offset < 0) {   // There's still a symbol to decode in state2
-            ST_write_byte(out, dtable->symbols[state2]);
-            return n_bytes+1;
-        }
+    u8 final = 0;
 
-        ST_write_byte(out, dtable->symbols[state2]);
+    for (size_t n_bytes = 0 ; ; ) { // Decode until we overflow the stream Since we decode in reverse order, overflowing the stream is offset going negative
+        ST_write_byte(out, dtable->table[state1]);
         n_bytes ++;
-        state2 = dtable->new_state_base[state2] + ST_backward_read_bits(in, dtable->num_bits[state2]);
-        if (in->bit_offset < 0) {   // There's still a symbol to decode in state1
-            ST_write_byte(out, dtable->symbols[state1]);
-            return n_bytes+1;
-        }
+        if (final) return n_bytes;
+        state1 = dtable->state_base[state1] + ST_backward_read_bits(in, dtable->n_bits[state1]);
+        final = (in->bit_offset < 0);
+        ST_write_byte(out, dtable->table[state2]);
+        n_bytes ++;
+        if (final) return n_bytes;
+        state2 = dtable->state_base[state2] + ST_backward_read_bits(in, dtable->n_bits[state2]);
+        final = (in->bit_offset < 0);
     }
 }
 
@@ -380,13 +368,6 @@ static void FSE_init_dtable (FSE_dtable *dtable, i32 *norm_freqs, i32 num_symbs,
     dtable->accuracy_log = accuracy_log;
 
     size_t size = (size_t)1 << accuracy_log;
-    dtable->symbols = malloc(size * sizeof(u8));
-    dtable->num_bits = malloc(size * sizeof(u8));
-    dtable->new_state_base = malloc(size * sizeof(i32));
-
-    if (!dtable->symbols || !dtable->num_bits || !dtable->new_state_base) {
-        ERROR_MALLOC();
-    }
 
     // Used to determine how many bits need to be read for each state, and where the destination range should start
     // Needs to be i32 because max value is 2 * max number of symbols, which can be larger than a byte can store
@@ -398,7 +379,7 @@ static void FSE_init_dtable (FSE_dtable *dtable, i32 *norm_freqs, i32 num_symbs,
     for (i32 s = 0; s < num_symbs; s++) {
         // Scan for low probability symbols to put at the top
         if (norm_freqs[s] == -1) {
-            dtable->symbols[--high_threshold] = s;
+            dtable->table[--high_threshold] = s;
             state_desc[s] = 1;
         }
     }
@@ -417,7 +398,7 @@ static void FSE_init_dtable (FSE_dtable *dtable, i32 *norm_freqs, i32 num_symbs,
 
         for (i32 i = 0; i < norm_freqs[s]; i++) {
             // Give `norm_freqs[s]` states to symbol s
-            dtable->symbols[pos] = s;
+            dtable->table[pos] = s;
             // "A position is skipped if already occupied, typically by a "less than 1" probability symbol."
             do {
                 pos = (pos + step) & mask;
@@ -432,10 +413,10 @@ static void FSE_init_dtable (FSE_dtable *dtable, i32 *norm_freqs, i32 num_symbs,
 
     // Now we can fill baseline and num bits
     for (size_t i = 0; i < size; i++) {
-        u8 symbol = dtable->symbols[i];
+        u8 symbol = dtable->table[i];
         i32 next_state_desc = state_desc[symbol]++;
-        dtable->num_bits[i] = (u8)(accuracy_log - highest_set_bit(next_state_desc));       // Fills in the table appropriately, next_state_desc increases by symbol over time, decreasing number of bits
-        dtable->new_state_base[i] = ((i32)next_state_desc << dtable->num_bits[i]) - size;  // Baseline increases until the bit threshold is passed, at which point it resets to 0
+        dtable->n_bits[i] = (u8)(accuracy_log - highest_set_bit(next_state_desc));       // Fills in the table appropriately, next_state_desc increases by symbol over time, decreasing number of bits
+        dtable->state_base[i] = ((i32)next_state_desc << dtable->n_bits[i]) - size;  // Baseline increases until the bit threshold is passed, at which point it resets to 0
     }
 }
 
@@ -453,10 +434,8 @@ static void FSE_decode_header (istream_t *in, FSE_dtable *dtable, i32 max_accura
     }
 
     // "Then follows each symbol value, from 0 to last present one. The number of bits used by each field is variable. It depends on :
-    //
     // Remaining probabilities + 1 : example : Presuming an Accuracy_Log of 8, and presuming 100 probabilities points have already been distributed, the
     // decoder may read any value from 0 to 255 - 100 + 1 == 156 (inclusive). Therefore, it must read log2sup(156) == 8 bits.
-    //
     // Value decoded : small values use 1 less bit : example : Presuming values from 0 to 156 (inclusive) are possible, 255-156 = 99 values are remaining
     // in an 8-bits field. They are used this way : first 99 values (hence from 0 to 98) use only 7 bits, values from 99 to 156 use 8 bits. "
 
@@ -515,29 +494,6 @@ static void FSE_decode_header (istream_t *in, FSE_dtable *dtable, i32 max_accura
     // Initialize the decoding table using the determined weights
     FSE_init_dtable(dtable, frequencies, symb, accuracy_log);
 }
-
-static void FSE_init_dtable_rle (FSE_dtable *dtable, u8 symb) {
-    dtable->symbols = malloc(sizeof(u8));
-    dtable->num_bits = malloc(sizeof(u8));
-    dtable->new_state_base = malloc(sizeof(i32));
-
-    if (!dtable->symbols || !dtable->num_bits || !dtable->new_state_base) {
-        ERROR_MALLOC();
-    }
-
-    // This setup will always have a state of 0, always return symbol `symb`, and never consume any bits
-    dtable->symbols[0] = symb;
-    dtable->num_bits[0] = 0;
-    dtable->new_state_base[0] = 0;
-    dtable->accuracy_log = 0;
-}
-
-static void FSE_free_dtable(FSE_dtable * dtable) {
-    free(dtable->symbols);
-    free(dtable->num_bits);
-    free(dtable->new_state_base);
-    memset(dtable, 0, sizeof(FSE_dtable));
-}
 /******* END FSE PRIMITIVES ***************************************************/
 
 
@@ -567,13 +523,13 @@ static size_t parse_offset (u64 offset, u64 *prev_offsets, u64 lit_len) {
     }
 }
 
-static void execute_sequences (ostream_t *out, u8 *literals, size_t n_lit, u64 *seq_lit_len, u64 *seq_mat_len, u64 *seq_offset, size_t n_seq, frame_context_t *ctx) {
+static void execute_sequences (ostream_t *out, u8 *buf_lit, size_t n_lit, u64 *seq_lit_len, u64 *seq_mat_len, u64 *seq_offset, size_t n_seq, frame_context_t *ctx) {
     for (size_t i=0; i<n_seq; i++) {
         u64 lit_len = seq_lit_len[i];
         u64 mat_len = seq_mat_len[i];
         
-        memcpy(ST_forward_skip(out, lit_len), literals, lit_len);
-        literals += lit_len;
+        memcpy(ST_forward_skip(out, lit_len), buf_lit, lit_len);
+        buf_lit += lit_len;
         n_lit -= lit_len;
         ctx->n_bytes_decoded += lit_len;
 
@@ -597,7 +553,7 @@ static void execute_sequences (ostream_t *out, u8 *literals, size_t n_lit, u64 *
     }
 
     ctx->n_bytes_decoded += n_lit;
-    memcpy(ST_forward_skip(out, n_lit), literals, n_lit);    // Copy any leftover literals
+    memcpy(ST_forward_skip(out, n_lit), buf_lit, n_lit);    // Copy any leftover literals
 }
 
 /******* END SEQUENCE EXECUTION ***********************************************/
@@ -652,24 +608,27 @@ static void decode_seq_table (istream_t *in, FSE_dtable *table, i32 type, i32 mo
             i32 *distribution = default_distributions[type];
             size_t symbs = default_distribution_lengths[type];
             size_t accuracy_log = default_distribution_accuracies[type];
-            FSE_free_dtable(table); // Free old one before overwriting
             FSE_init_dtable(table, distribution, symbs, accuracy_log);
+            table->exist = 1;
             break;
         }
         case 1: { // "RLE_Mode : it's a single code, repeated Number_of_Sequences times."
             u8 symb = ST_forward_skip(in, 1)[0];
-            FSE_free_dtable(table); // Free old one before overwriting
-            FSE_init_dtable_rle(table, symb);
+            table->table[0] = symb;
+            table->n_bits[0] = 0;
+            table->state_base[0] = 0;
+            table->accuracy_log = 0;
+            table->exist = 1;
             break;
         }
         case 2: { // "FSE_Compressed_Mode : standard FSE compression. A distribution table will be present "
-            FSE_free_dtable(table); // Free old one before overwriting
             FSE_decode_header(in, table, max_accuracies[type]);
+            table->exist = 1;
             break;
         }
         default:{ // "Repeat_Mode : reuse distribution table from previous compressed block."
-            if (!table->symbols) { // Nothing to do here, table will be unchanged
-                ERROR_CORRUPT();   // This mode is invalid if we don't already have a table
+            if (!table->exist) { // Nothing to do here, table will be unchanged
+                ERROR_CORRUPT(); // This mode is invalid if we don't already have a table
             }
             break;
         }
@@ -706,15 +665,15 @@ static void decompress_sequences (istream_t *in, u64 *seq_lit_len, u64 *seq_mat_
             of_state = ST_backward_read_bits(in, ctx->of_dtable.accuracy_log);
             ml_state = ST_backward_read_bits(in, ctx->ml_dtable.accuracy_log);
         } else {
-            ll_state = ctx->ll_dtable.new_state_base[ll_state] + ST_backward_read_bits(in, ctx->ll_dtable.num_bits[ll_state]);
-            ml_state = ctx->ml_dtable.new_state_base[ml_state] + ST_backward_read_bits(in, ctx->ml_dtable.num_bits[ml_state]);
-            of_state = ctx->of_dtable.new_state_base[of_state] + ST_backward_read_bits(in, ctx->of_dtable.num_bits[of_state]);
+            ll_state = ctx->ll_dtable.state_base[ll_state] + ST_backward_read_bits(in, ctx->ll_dtable.n_bits[ll_state]);
+            ml_state = ctx->ml_dtable.state_base[ml_state] + ST_backward_read_bits(in, ctx->ml_dtable.n_bits[ml_state]);
+            of_state = ctx->of_dtable.state_base[of_state] + ST_backward_read_bits(in, ctx->of_dtable.n_bits[of_state]);
         }
 
         // Decode symbols, but don't update states
-        u8 ll_code = ctx->ll_dtable.symbols[ll_state];
-        u8 of_code = ctx->of_dtable.symbols[of_state];
-        u8 ml_code = ctx->ml_dtable.symbols[ml_state];
+        u8 ll_code = ctx->ll_dtable.table[ll_state];
+        u8 of_code = ctx->of_dtable.table[of_state];
+        u8 ml_code = ctx->ml_dtable.table[ml_state];
         
         // Offset doesn't need a max value as it's not decoded using a table
         if (ll_code > MAX_CODE_LIT_LEN || ml_code > MAX_CODE_MAT_LEN) {
@@ -770,7 +729,7 @@ static void convert_huf_weights_to_bits (u8 *weights, u8 *bits, i32 num_symbs) {
 }
 
 // Decode the Huffman table description
-static void decode_huf_table (istream_t *in, HUF_dtable *dtable) {
+static void decode_huf_table (istream_t *in, frame_context_t *p_ctx) {
     u8 hbyte = ST_forward_read_bits(in, 8);  // "This is a single byte value (0-255), which describes how to decode the list of weights."
 
     u8 weights[HUF_MAX_SYMBS];
@@ -800,18 +759,17 @@ static void decode_huf_table (istream_t *in, HUF_dtable *dtable) {
         FSE_dtable fse_dtable;
         FSE_decode_header(&fse_stream, &fse_dtable, 7);  // "An FSE bitstream starts by a header, describing probabilities distribution. It will create a Decoding Table. For a list of Huffman weights, maximum accuracy is 7 bits."
         num_symbs = FSE_decompress_interleaved2(&fse_stream, &weight_stream, &fse_dtable);    // Decode the weights
-        FSE_free_dtable(&fse_dtable);
     }
     
     convert_huf_weights_to_bits(weights, bits, num_symbs);
-    HUF_init_dtable(dtable, bits, num_symbs+1);
+    HUF_init_dtable(p_ctx, bits, num_symbs+1);
 }
 
 /// Decodes Huffman compressed literals
-static size_t decode_literals_compressed (istream_t *in, u8 **literals, frame_context_t *ctx, i32 block_type) {
+static size_t decode_literals_compressed (istream_t *in, u8 *buf_lit, frame_context_t *ctx, i32 block_type) {
     i32 stream_x1 = 0;
     size_t regenerated_size, compressed_size;
-     i32 size_format = (i32)ST_forward_read_bits(in, 2);
+    i32 size_format = (i32)ST_forward_read_bits(in, 2);
 
     switch (size_format) {
         case 0:  // "A single stream. Both Compressed_Size and Regenerated_Size use 10 bits (0-1023)."
@@ -833,28 +791,24 @@ static size_t decode_literals_compressed (istream_t *in, u8 **literals, frame_co
     if (regenerated_size > MAX_LITERALS_SIZE) {
         ERROR_CORRUPT();
     }
-
-    if (!(*literals = malloc(regenerated_size+32))) {
-        ERROR_MALLOC();
-    }
     
     istream_t huf_stream = ST_forward_fork_sub(in, compressed_size);
 
     if (block_type == 2) {
-        HUF_free_dtable(&ctx->literals_dtable);
-        decode_huf_table(&huf_stream, &ctx->literals_dtable);  // Decode the provided Huffman table "This section is only present when Literals_Block_Type type is Compressed_Literals_Block (2)."
-    } else if (!ctx->literals_dtable.symbols) {   // If the previous Huffman table is being repeated, ensure it exists
+        decode_huf_table(&huf_stream, ctx); // Decode the provided Huffman table "This section is only present when Literals_Block_Type type is Compressed_Literals_Block (2)."
+        ctx->huf_table_exist = 1;
+    } else if (!ctx->huf_table_exist) {     // If the previous Huffman table is being repeated, ensure it exists
         ERROR_CORRUPT();
     }
 
-    u8 *p_lit = *literals;
+    u8 *p_lit = buf_lit;
     if (stream_x1) {
-        HUF_decompress_1stream(&huf_stream, &p_lit, &ctx->literals_dtable);
+        HUF_decompress_1stream(&huf_stream, &p_lit, ctx);
     } else {
-        HUF_decompress_4stream(&huf_stream, &p_lit, &ctx->literals_dtable);
+        HUF_decompress_4stream(&huf_stream, &p_lit, ctx);
     }
 
-    if ((p_lit-(*literals)) != regenerated_size) {
+    if ((p_lit-buf_lit) != regenerated_size) {
         ERROR_CORRUPT();
     }
 
@@ -862,7 +816,7 @@ static size_t decode_literals_compressed (istream_t *in, u8 **literals, frame_co
 }
 
 /// Decodes literals blocks in raw or RLE form
-static size_t decode_literals_simple (istream_t *in, u8 **literals, i32 block_type) {
+static size_t decode_literals_simple (istream_t *in, u8 *buf_lit, i32 block_type) {
     i32 size_format = (i32)ST_forward_read_bits(in, 2);
 
     size_t size;
@@ -883,19 +837,15 @@ static size_t decode_literals_simple (istream_t *in, u8 **literals, i32 block_ty
         ERROR_CORRUPT();
     }
 
-    if (!(*literals = malloc(size))) {
-        ERROR_MALLOC();
-    }
-
     switch (block_type) {
         case 0: {   // "Raw_Literals_Block - Literals are stored uncompressed."
-             u8 * read_ptr = ST_forward_skip(in, size);
-            memcpy(*literals, read_ptr, size);
+            u8 * read_ptr = ST_forward_skip(in, size);
+            memcpy(buf_lit, read_ptr, size);
             break;
         }
         default: {  // case1: "RLE_Literals_Block - Literals consist of a single byte value repeated N times."
-             u8 * read_ptr = ST_forward_skip(in, 1);
-            memset(*literals, read_ptr[0], size);
+            u8 * read_ptr = ST_forward_skip(in, 1);
+            memset(buf_lit, read_ptr[0], size);
             break;
         }
     }
@@ -946,8 +896,8 @@ static void parse_frame_header (istream_t *in, frame_context_t *ctx) {
         // "This is the original (uncompressed) size. This information is optional. The Field_Size is provided according to value of
         // Frame_Content_Size_flag. The Field_Size can be equal to 0 (not present), 1, 2, 4 or 8 bytes. Format is little-endian."
         // if frame_content_size_flag == 0 but single_segment_flag is set, we still have a 1 byte field
-         i32 bytes_array[] = {1, 2, 4, 8};
-         i32 bytes = bytes_array[frame_content_size_flag];
+        i32 bytes_array[] = {1, 2, 4, 8};
+        i32 bytes = bytes_array[frame_content_size_flag];
 
         ctx->frame_content_size = ST_forward_read_bits(in, bytes * 8);
         if (bytes == 2) {
@@ -991,44 +941,38 @@ static void decompress_blocks_in_frame (istream_t *in, ostream_t *out, frame_con
             case 2: {  // "Compressed_Block - this is a Zstandard compressed block, detailed in another section of this specification. Block_Size is the compressed size.
                 istream_t in_blk = ST_forward_fork_sub(in, block_len);  // Create a sub-stream for the block
                 
-                u8  *literals    = NULL;
-                u64 *seq_lit_len = NULL;
-                u64 *seq_mat_len = NULL;
-                u64 *seq_offset  = NULL;
                 size_t n_lit, n_seq;
+                u8  *buf_lit;
+                u64 *seq_lit_len, *seq_mat_len, *seq_offset;
+
+                buf_lit = malloc(sizeof(u8)*MAX_LITERALS_SIZE + sizeof(u64)*MAX_SEQ_SIZE*3);
+                ERROR_IF_MALLOC_FAIL(buf_lit);
+                seq_lit_len = (u64*)(buf_lit + MAX_LITERALS_SIZE);
+                seq_mat_len = seq_lit_len + MAX_SEQ_SIZE;
+                seq_offset  = seq_mat_len + MAX_SEQ_SIZE;
                 
-                i32 block_type  = (i32)ST_forward_read_bits(&in_blk, 2);
+                i32 block_type = (i32)ST_forward_read_bits(&in_blk, 2);
 
                 if (block_type <= 1) {
-                    n_lit = decode_literals_simple(&in_blk, &literals, block_type);          // Raw or RLE literals block
+                    n_lit = decode_literals_simple(&in_blk, buf_lit, block_type);          // Raw or RLE literals block
                 } else {
-                    n_lit = decode_literals_compressed(&in_blk, &literals, ctx, block_type); // Huffman compressed literals
+                    n_lit = decode_literals_compressed(&in_blk, buf_lit, ctx, block_type); // Huffman compressed literals
                 }
                 
                 // decode Number_of_Sequences. This is a variable size field using between 1 and 3 bytes. Let's call its first byte byte0."
                 u8 hbyte = ST_forward_read_bits(&in_blk, 8);
                 if (hbyte < 128) {
-                    n_seq = hbyte;                                                             // "Number_of_Sequences = byte0 . Uses 1 byte."
+                    n_seq = hbyte;                                                   // "Number_of_Sequences = byte0 . Uses 1 byte."
                 } else if (hbyte < 255) {
                     n_seq = ((hbyte - 128) << 8) + ST_forward_read_bits(&in_blk, 8); // "Number_of_Sequences = ((byte0-128) << 8) + byte1 . Uses 2 bytes."
                 } else {
                     n_seq = ST_forward_read_bits(&in_blk, 16) + 0x7F00;              // "Number_of_Sequences = byte1 + (byte2<<8) + 0x7F00 . Uses 3 bytes."
                 }
-            
-                if (n_seq) {
-                    seq_lit_len = malloc(3 * n_seq * sizeof(u64));
-                    seq_mat_len = seq_lit_len + n_seq;
-                    seq_offset  = seq_mat_len + n_seq;
-                    if (!seq_lit_len) {
-                        ERROR_MALLOC();
-                    }
-                    decompress_sequences(&in_blk, seq_lit_len, seq_mat_len, seq_offset, n_seq, ctx);
-                }
-
-                execute_sequences(out, literals, n_lit, seq_lit_len, seq_mat_len, seq_offset, n_seq, ctx);
                 
-                free(literals);
-                free(seq_lit_len);
+                decompress_sequences(&in_blk, seq_lit_len, seq_mat_len, seq_offset, n_seq, ctx);
+                execute_sequences(out, buf_lit, n_lit, seq_lit_len, seq_mat_len, seq_offset, n_seq, ctx);
+                
+                free(buf_lit);
 
                 break;
             }
@@ -1052,28 +996,24 @@ static void decode_frame (istream_t *in, ostream_t *out) {
         ERROR("Tried to decode non-ZSTD frame");
     }
 
-    frame_context_t ctx;                      //  Initialize the context that needs to be carried from block to block
-    memset(&ctx, 0, sizeof(frame_context_t)); // Most fields in context are correct when initialized to 0
+    frame_context_t *p_ctx;                    //  Initialize the context that needs to be carried from block to block
+    p_ctx = (frame_context_t*)malloc(sizeof(frame_context_t));
+    ERROR_IF_MALLOC_FAIL(p_ctx);
+    memset(p_ctx, 0, sizeof(frame_context_t)); // Most fields in context are correct when initialized to 0
 
-    parse_frame_header(in, &ctx);             // Parse data from the frame header
+    parse_frame_header(in, p_ctx);             // Parse data from the frame header
 
     // Set up the offset history for the repeat offset commands
-    ctx.prev_offsets[0] = 1;
-    ctx.prev_offsets[1] = 4;
-    ctx.prev_offsets[2] = 8;
+    p_ctx->prev_offsets[0] = 1;
+    p_ctx->prev_offsets[1] = 4;
+    p_ctx->prev_offsets[2] = 8;
 
-    if (ctx.frame_content_size != 0 && ctx.frame_content_size > out->len) {
+    if (p_ctx->frame_content_size != 0 && p_ctx->frame_content_size > out->len) {
         ERROR_OUT_SIZE();
     }
 
-    decompress_blocks_in_frame(in, out, &ctx);
-
-    // free frame context
-    HUF_free_dtable(&ctx.literals_dtable);
-    FSE_free_dtable(&ctx.ll_dtable);
-    FSE_free_dtable(&ctx.ml_dtable);
-    FSE_free_dtable(&ctx.of_dtable);
-    memset(&ctx, 0, sizeof(frame_context_t));\
+    decompress_blocks_in_frame(in, out, p_ctx);
+    free(p_ctx);
 }
 /******* END FRAME DECODING ***************************************************/
 
@@ -1091,17 +1031,23 @@ size_t ZSTD_decompress (void *src, size_t src_len, void *dst, size_t dst_len) {
 }
 
 size_t ZSTD_get_decompressed_size (void *src, size_t src_len) {
+    size_t result;
     istream_t in = ST_new(src, src_len);
     if ((u64)ST_forward_read_bits(&in, 32) != ZSTD_MAGIC_NUMBER) {
         ERROR("ZSTD frame magic number did not match");
     }
-    frame_context_t ctx;
-    parse_frame_header(&in, &ctx);
-    if (ctx.frame_content_size == 0 && !ctx.single_segment_flag) {
-        return (size_t)-1;
+    frame_context_t *p_ctx;
+    p_ctx = (frame_context_t*)malloc(sizeof(frame_context_t));
+    ERROR_IF_MALLOC_FAIL(p_ctx);
+    memset(p_ctx, 0, sizeof(frame_context_t));
+    parse_frame_header(&in, p_ctx);
+    if (p_ctx->frame_content_size == 0 && !p_ctx->single_segment_flag) {
+        result = (size_t)-1;
     } else {
-        return ctx.frame_content_size;
+        result = p_ctx->frame_content_size;
     }
+    free(p_ctx);
+    return result;
 }
 
 /******* END ZSTD DECODING API ******************************************************/
