@@ -127,13 +127,7 @@ int main (int argc, char **argv) {
             dst_len = src_len + (src_len>>3) + 1048576;  // estimate maximum compressed size based on original size
             break;
         case DECOMPRESS :
-            dst_len = (src_len * 500) + 1048576;         // estimate maximum decompressed size based on compressed size
-            if (type_format == ZSTD) {
-                size_t parsed_dst_len = ZSTD_get_decompressed_size(p_src, src_len);
-                if (parsed_dst_len != (size_t)-1) {
-                    dst_len = parsed_dst_len + 1048576;
-                }
-            }
+            dst_len = MAX_DST_LEN;
             break;
         case ACTION_NONE :
             printf(USAGE);

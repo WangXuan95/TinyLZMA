@@ -1,14 +1,9 @@
 #ifndef   __TINY_ZSTD_DECOMPRESS_H__
 #define   __TINY_ZSTD_DECOMPRESS_H__
 
-#include <stddef.h>   // use size_t
+#include <stddef.h>   // size_t
+#include <stdint.h>   // uint8_t
 
-/// Zstandard decompression functions.
-/// `dst` must point to a space at least as large as the reconstructed output.
-size_t ZSTD_decompress (void *src, size_t src_len, void *dst, size_t dst_len);
-
-/// Get the decompressed size of an input stream so memory can be allocated in advance
-/// Returns -1 if the size can't be determined. Assumes decompression of a single frame
-size_t ZSTD_get_decompressed_size (void *src, size_t src_len);
+size_t ZSTD_decompress (uint8_t *p_src, size_t src_len, uint8_t *p_dst, size_t dst_capacity);
 
 #endif // __TINY_ZSTD_DECOMPRESS_H__

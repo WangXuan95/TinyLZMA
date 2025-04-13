@@ -370,7 +370,7 @@ void deflateBlockFixedHuffman (struct StreamWriter_t *p_bs, uint8_t *p_src, uint
     
     uint8_t *p_end = p_src + len;
     
-    uint32_t symbol, len_extra_bits, len_extra_len, dist_symbol, dist_extra_bits, dist_extra_len;
+    uint32_t symbol=0, len_extra_bits=0, len_extra_len=0, dist_symbol=0, dist_extra_bits=0, dist_extra_len=0;
     uint32_t i;
     
     uint8_t *hash_table [HASH_SIZE];
