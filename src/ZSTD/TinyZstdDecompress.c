@@ -531,7 +531,7 @@ static size_t decode_literals (frame_context_t *p_ctx, istream_t *p_st_src) {
     u8 n_lit_type = istream_readbits(p_st_src, 2);
     size_t n_lit, huf_size;
     u8 huf_x1 = 0;
-    if (lit_type < 1) {
+    if (lit_type < 2) {
         switch (n_lit_type) {
             case 0:  n_lit = (istream_readbits(p_st_src, 4) << 1);      break;
             case 2:  n_lit = (istream_readbits(p_st_src, 4) << 1) + 1;  break;
