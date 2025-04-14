@@ -3,19 +3,21 @@
 TinyZZZ
 ===========================
 
-TinyZZZ is a simple, standalone data compressor/decompressor which supports several popular data compression algorithms, including [GZIP](https://www.rfc-editor.org/rfc/rfc1952), [ZSTD](https://github.com/facebook/zstd), [LZMA](https://www.7-zip.org/sdk.html) (and maybe more in future). These algorithms are written in C language, unlike the official code implementation, this code mainly focuses on simplicity and easy to understand.
+TinyZZZ is a simple, standalone data compressor/decompressor which supports several popular data compression algorithms, including [GZIP](https://www.rfc-editor.org/rfc/rfc1952), [ZSTD](https://github.com/facebook/zstd), [LZMA](https://www.7-zip.org/sdk.html) . These algorithms are written in C language, unlike the official code implementation, this code mainly focuses on simplicity and easy to understand.
 
-#### TinyZZZ currently supports:
+TinyZZZ currently supports:
 
-  - GZIP compress: compress a file into a ".gz" file
-  - ZSTD decompress: decompress a ".zst" file to a file
-  - LZMA decompress: decompress a ".lzma" file to a file
-  - LZMA compress: compress a file into a ".lzma" file
-  - LZMA compress: compress a file into a ".zip" container file (compress method=LZMA)
+|                       format                       | file suffix | compress supported                     | decompress supported |          source code          |
+| :------------------------------------------------: | :---------: | :------------------------------------: | :------------------: | :---------------------------: |
+| **[GZIP](https://www.rfc-editor.org/rfc/rfc1952)** |     .gz     | :heavy_check_mark:                     | :x:                  | [500 lines of C](./src/GZIP)  |
+|    **[ZSTD](https://github.com/facebook/zstd)**    |    .zst     | :x:                                    | :heavy_check_mark:   | [800 lines of C](./src/ZSTD)  |
+|     **[LZMA](https://www.7-zip.org/sdk.html)**     |    .lzma    | :heavy_check_mark:                     | :heavy_check_mark:   | [1400 lines of C](./src/LZMA) |
+|                      **ZIP**                       |    .zip     | :heavy_check_mark: (in LZMA algorithm) | :x:                  |                               |
+
 
 #### About GZIP
 
-[GZIP](https://www.rfc-editor.org/rfc/rfc1952) is an old lossless data compression algorithm which has excellent compatibility. The core compression algorithm of GZIP is [Deflate](https://www.rfc-editor.org/rfc/rfc1951). The file name suffix of compressed GZIP file is ".gz"
+[GZIP](https://www.rfc-editor.org/rfc/rfc1952) is an old, famous lossless data compression algorithm which has excellent compatibility. The core compression algorithm of GZIP is [Deflate](https://www.rfc-editor.org/rfc/rfc1951). The file name suffix of compressed GZIP file is ".gz"
 
 #### About ZSTD
 
