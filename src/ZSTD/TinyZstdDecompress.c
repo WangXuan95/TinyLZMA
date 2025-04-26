@@ -1,5 +1,5 @@
-/// Zstandard educational decoder implementation (simplified)
-/// See https://github.com/facebook/zstd/blob/dev/doc/zstd_compression_format.md
+/// Zstandard educational decoder implementation (simplified)  
+/// See https://github.com/facebook/zstd/blob/dev/doc/zstd_compression_format.md  
 
 #include <stddef.h>   // size_t
 #include <stdint.h>   // uint8_t, uint16_t, int32_t, uint64_t
@@ -13,9 +13,9 @@ typedef uint16_t u16;
 typedef int32_t  i32;
 typedef uint64_t u64;
 
-#define HUF_DECODE_4X1_FAST   1
-
-#define ZSTD_MAGIC_NUMBER     (0xFD2FB528U)
+#define SKIP_MAGIC_NUMBER_MIN (0x184D2A50U)    // min magic number of skip frame
+#define SKIP_MAGIC_NUMBER_MAX (0x184D2A5FU)    // max magic number of skip frame
+#define ZSTD_MAGIC_NUMBER     (0xFD2FB528U)    //     magic number of zstd frame
 #define ZSTD_BLOCK_SIZE_MAX   (128 * 1024)
 #define MAX_SEQ_SIZE          (0x18000)
 
@@ -25,7 +25,7 @@ typedef uint64_t u64;
 #define ERROR_I_SIZE_IF(cond)    { ERROR_IF((cond), ("Input buffer smaller than it should be or input is corrupted")); }
 #define ERROR_O_SIZE_IF(cond)    { ERROR_IF((cond), ("Output buffer overflow")); }
 #define ERROR_CORRUPT_IF(cond)   { ERROR_IF((cond), ("Corruption detected while decompressing")); }
-#define ERROR_NOT_ZSTD_IF(cond)  { ERROR_IF((cond), ("This data is not ZSTD compressed stream")); }
+#define ERROR_NOT_ZSTD_IF(cond)  { ERROR_IF((cond), ("This data is not valid ZSTD frame")); }
 #define ERROR_MALLOC_IF(cond)    { ERROR_IF((cond), ("Memory allocation error")); }
 
 #define HUF_MAX_BITS     (13)
@@ -53,12 +53,12 @@ typedef struct {
 
     u8  buf_lit [ZSTD_BLOCK_SIZE_MAX + 32];
     
-    u8  huf_table  [HUF_TABLE_LENGTH]; // 同一个frame内跨block复用的huffman解码表
+    u8  huf_table  [HUF_TABLE_LENGTH]; // 同一个frame内跨block复用的huffman解码表   
     u8  huf_n_bits [HUF_TABLE_LENGTH];
     u8  huf_m_bits;
     u8  huf_table_exist;
     
-    FSE_table table_ll;                // 同一个frame内跨block复用的fse解码表
+    FSE_table table_ll;                // 同一个frame内跨block复用的fse解码表   
     FSE_table table_ml;
     FSE_table table_of;
 } frame_context_t;
@@ -84,7 +84,7 @@ static i32 highest_set_bit (u64 value) {
 
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/// 正向输入流类型，用于除了 huffman 和 fse 以外的数据读取 (meta-data)
+/// 正向输入流类型，用于除了 huffman 和 fse 以外的数据读取 (meta-data)  
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 typedef struct {
@@ -119,11 +119,11 @@ static u64 istream_readbytes (istream_t *p_st, u8 n_bytes) {
 }
 
 static u64 istream_readbits (istream_t *p_st, u8 n_bits) {
-    ERROR_IF(n_bits==0, "why???");
     u8 bitpos_start = p_st->c;
     u8 bitpos_end   = p_st->c + n_bits;
     u8 bytepos_end  = bitpos_end / 8;
     u64 valueh, valuel=0;
+    ERROR_IF(n_bits==0, "why???");
     p_st->c = 0;
     valueh = istream_readbytes(p_st, bytepos_end);
     valueh >>= bitpos_start;
@@ -152,9 +152,9 @@ static size_t istream_get_remain_len (istream_t *p_st) {
 }
 
 static u8 *istream_skip (istream_t* p_st, size_t len) {
+    u8 *ptr = p_st->p;
     ERROR_CORRUPT_IF(p_st->c != 0);
     ERROR_I_SIZE_IF(len > (p_st->plimit - p_st->p));
-    u8 *ptr = p_st->p;
     p_st->p += len;
     return ptr;
 }
@@ -166,7 +166,7 @@ static istream_t istream_fork_substream (istream_t *p_st, size_t len) {
 
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/// 反向输入流类型，用于 huffman 或 fse 解码
+/// 反向输入流类型，用于 huffman 或 fse 解码  
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 typedef struct {
@@ -177,8 +177,8 @@ typedef struct {
     u64 data;
 } backward_stream_t;
 
-/// load 一次就会在 data 中缓存至少 57 bit
-/// 之后可以 read/move 多次，注意多次累计读取的 bit 数量不能超过57，否则 57 bit 会被消耗完，需要重新 load 再进行 read/move
+/// load 一次就会在 data 中缓存至少 57 bit  
+/// 之后可以 read/move 多次，注意多次累计读取的 bit 数量不能超过57，否则 57 bit 会被消耗完，需要重新 load 再进行 read/move  
 static void backward_stream_load (backward_stream_t *p_bst) {
     p_bst->p -= (p_bst->c >> 3);
     p_bst->c &= 0x7;
@@ -219,7 +219,7 @@ static void backward_stream_check_ended (backward_stream_t *p_bst) {
     ERROR_CORRUPT_IF(p_bst->c != 0);
 }
 
-/// 用 istream_t 对象初始化一个 backward_stream_t 对象 ，用于解码FSE流和huffman流
+/// 用 istream_t 对象初始化一个 backward_stream_t 对象 ，用于解码FSE流和huffman流   
 static backward_stream_t backward_stream_new (istream_t st, u8 n_bits_for_huf_read) {
     backward_stream_t bst;
     ERROR_CORRUPT_IF(st.c != 0);
@@ -235,7 +235,7 @@ static backward_stream_t backward_stream_new (istream_t st, u8 n_bits_for_huf_re
 
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/// ZSTD 解码相关函数（内部）
+/// ZSTD 解码相关函数（内部）  
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 static i32 decode_fse_freqs (istream_t *p_st_src, i32 *p_freq, i32 m_bits) {
@@ -283,7 +283,7 @@ static void build_fse_table (FSE_table *p_ftab, i32 *p_freq, i32 n_symb) {
     ERROR_CORRUPT_IF(n_symb > FSE_MAX_SYMBS);
 
     for (s=0; s<n_symb; s++) {
-        if (p_freq[s] == -1) {  // -1是一种特殊的符号频率，代表该symbol频率很低(比1更低)，把他们放在顶部
+        if (p_freq[s] == -1) {  // -1是一种特殊的符号频率，代表该symbol频率很低(比1更低)，把他们放在顶部   
             pos_high --;
             p_ftab->table[pos_high] = s;
             state_desc[s] = 1;
@@ -294,30 +294,31 @@ static void build_fse_table (FSE_table *p_ftab, i32 *p_freq, i32 n_symb) {
         if (p_freq[s] > 0) {
             state_desc[s] = p_freq[s];
             for (i=0; i<p_freq[s]; i++) {
-                p_ftab->table[pos] = s;         // Give `p_freq[s]` states to symbol s
-                do {                            // "A position is skipped if already occupied, typically by a "less than 1" probability symbol."
+                p_ftab->table[pos] = s;         // Give `p_freq[s]` states to symbol s  
+                do {                            // "A position is skipped if already occupied, typically by a "less than 1" probability symbol."  
                     pos = (pos + step) & (pos_limit - 1);
-                } while (pos >= pos_high);      // Note: no other collision checking is necessary as `step` is coprime to `size`, so the cycle will visit each position exactly once
+                } while (pos >= pos_high);      // Note: no other collision checking is necessary as `step` is coprime to `size`, so the cycle will visit each position exactly once  
             }
         }
     }
 
     ERROR_CORRUPT_IF(pos != 0);
     
-    for (i=0; i<pos_limit; i++) {         // fill baseline and num bits
+    for (i=0; i<pos_limit; i++) {         // fill baseline and num bits  
         u8 symbol = p_ftab->table[i];
         i32 next_state_desc = state_desc[symbol]++;
-        p_ftab->n_bits[i] = (u8)(p_ftab->m_bits - highest_set_bit(next_state_desc));    // Fills in the table appropriately, next_state_desc increases by symbol over time, decreasing number of bits
-        p_ftab->state_base[i] = ((i32)next_state_desc << p_ftab->n_bits[i]) - pos_limit;  // Baseline increases until the bit threshold is passed, at which point it resets to 0
+        p_ftab->n_bits[i] = (u8)(p_ftab->m_bits - highest_set_bit(next_state_desc));      // Fills in the table appropriately, next_state_desc increases by symbol over time, decreasing number of bits  
+        p_ftab->state_base[i] = ((i32)next_state_desc << p_ftab->n_bits[i]) - pos_limit;  // Baseline increases until the bit threshold is passed, at which point it resets to 0  
     }
 }
 
 
 static void decode_and_build_fse_table (FSE_table *p_ftab, istream_t *p_st_src, i32 max_m_bits) {
+    i32 n_fse_symb;
     i32 p_fse_freq [FSE_MAX_SYMBS] = {0};
     p_ftab->m_bits = 5 + istream_readbits(p_st_src, 4);
     ERROR_CORRUPT_IF(p_ftab->m_bits > max_m_bits);
-    i32 n_fse_symb = decode_fse_freqs(p_st_src, p_fse_freq, p_ftab->m_bits);
+    n_fse_symb = decode_fse_freqs(p_st_src, p_fse_freq, p_ftab->m_bits);
     build_fse_table(p_ftab, p_fse_freq, n_fse_symb);
 }
 
@@ -373,7 +374,7 @@ static void convert_huf_weights_to_bits (u8 *p, size_t n_symb) {
     }
     max_bits = 1 + highest_set_bit(sum);
     left = (1 << max_bits) - sum;
-    ERROR_CORRUPT_IF(left & (left - 1));      // left 必须是2的指数
+    ERROR_CORRUPT_IF(left & (left - 1));      // left 必须是2的指数   
     p[n_symb-1] = highest_set_bit(left) + 1;
     for (i=0; i<n_symb; i++) {
         if (p[i]) {
@@ -383,9 +384,10 @@ static void convert_huf_weights_to_bits (u8 *p, size_t n_symb) {
 }
 
 
-static void huf_build_table (frame_context_t *p_ctx, u8 *bits, i32 n_symb) {
+static void build_huf_table (frame_context_t *p_ctx, u8 *bits, i32 n_symb) {
     i32 i;
-    i32 rank_count[HUF_MAX_BITS + 1] = {0};
+    u64 rank_idx   [HUF_MAX_BITS + 1];
+    i32 rank_count [HUF_MAX_BITS + 1] = {0};
     p_ctx->huf_m_bits = 0;
     for (i=0; i<n_symb; i++) {
         ERROR_CORRUPT_IF(bits[i] > HUF_MAX_BITS);
@@ -394,19 +396,20 @@ static void huf_build_table (frame_context_t *p_ctx, u8 *bits, i32 n_symb) {
             p_ctx->huf_m_bits = bits[i];
         }
     }
-    memset(p_ctx->huf_table , 0, sizeof(p_ctx->huf_table [0])*HUF_TABLE_LENGTH);
-    memset(p_ctx->huf_n_bits, 0, sizeof(p_ctx->huf_n_bits[0])*HUF_TABLE_LENGTH);
-    u64 rank_idx[HUF_MAX_BITS + 1]; // The entire range takes the same number of bits so we can memset it
-    rank_idx[p_ctx->huf_m_bits] = 0;   // Initialize the starting codes for each rank (number of bits)
+    for (i=0; i<HUF_TABLE_LENGTH; i++) {
+        p_ctx->huf_table [i] = 0;
+        p_ctx->huf_n_bits[i] = 0;
+    }
+    rank_idx[p_ctx->huf_m_bits] = 0;   // Initialize the starting codes for each rank (number of bits) 
     for (i=p_ctx->huf_m_bits; i>=1; i--) {
         rank_idx[i - 1] = rank_idx[i] + rank_count[i] * (1 << ((i32)p_ctx->huf_m_bits - i));
-        memset(&p_ctx->huf_n_bits[rank_idx[i]], i, rank_idx[i - 1] - rank_idx[i]);  // The entire range takes the same number of bits so we can memset it
+        memset(&p_ctx->huf_n_bits[rank_idx[i]], i, rank_idx[i - 1] - rank_idx[i]);  // The entire range takes the same number of bits so we can memset it 
     }
     ERROR_CORRUPT_IF(rank_idx[0] != (1 << p_ctx->huf_m_bits));
     for (i=0; i<n_symb; i++) {  // fill in the table
         if (bits[i] != 0) {
-            i32 code = rank_idx[bits[i]];  // Allocate a code for this symbol and set its range in the table
-            i32 len = 1 << ((i32)p_ctx->huf_m_bits - bits[i]);  // Since the code doesn't care about the bottom `m_bits - bits[i]` bits of state, it gets a range that spans all possible values of the lower bits
+            i32 code = rank_idx[bits[i]];  // Allocate a code for this symbol and set its range in the table 
+            i32 len = 1 << ((i32)p_ctx->huf_m_bits - bits[i]);  // Since the code doesn't care about the bottom `m_bits - bits[i]` bits of state, it gets a range that spans all possible values of the lower bits 
             memset(&p_ctx->huf_table[code], i, len);
             rank_idx[bits[i]] += len;
         }
@@ -416,20 +419,21 @@ static void huf_build_table (frame_context_t *p_ctx, u8 *bits, i32 n_symb) {
 
 static void decode_and_build_huf_table (frame_context_t *p_ctx, istream_t *p_st_src) {
     u8 p_weights_or_bits [HUF_MAX_SYMBS] = {0};
-    size_t n_symb = decode_huf_weights(p_st_src, p_weights_or_bits) + 1;  // 最后一个weight不编码，而是算出来的，所以这里要+1
+    size_t n_symb = decode_huf_weights(p_st_src, p_weights_or_bits) + 1;  // 最后一个weight不编码，而是算出来的，所以这里要+1  
     ERROR_CORRUPT_IF(n_symb > HUF_MAX_SYMBS);
     convert_huf_weights_to_bits(p_weights_or_bits, n_symb);
-    huf_build_table(p_ctx, p_weights_or_bits, n_symb);
+    build_huf_table(p_ctx, p_weights_or_bits, n_symb);
 }
 
 
 static void huf_decode_1x1 (frame_context_t *p_ctx, istream_t *p_st_src, size_t n_lit, u8 *p_dst) {
+    u8 i;
     backward_stream_t bst = backward_stream_new(*p_st_src, p_ctx->huf_m_bits);
     size_t n_lit_div = n_lit / 5;
     size_t n_lit_rem = n_lit - n_lit_div*5;
     for (; n_lit_div>0; n_lit_div--) {
         backward_stream_load(&bst);
-        for (u8 i=0; i<5; i++) {
+        for (i=0; i<5; i++) {
             u64 entry = backward_stream_read(&bst);
             *(p_dst++) = p_ctx->huf_table[entry];
             backward_stream_move(&bst, p_ctx->huf_n_bits[entry]);
@@ -444,8 +448,6 @@ static void huf_decode_1x1 (frame_context_t *p_ctx, istream_t *p_st_src, size_t 
     backward_stream_check_ended(&bst);
 }
 
-
-#if (!HUF_DECODE_4X1_FAST)
 
 static void huf_decode_4x1 (frame_context_t *p_ctx, istream_t *p_st_src, size_t n_lit, u8 *p_dst) {
     size_t csize1 = istream_readbytes(p_st_src, 2);
@@ -464,66 +466,6 @@ static void huf_decode_4x1 (frame_context_t *p_ctx, istream_t *p_st_src, size_t 
     huf_decode_1x1(p_ctx, &st3, n_lit123, p_dst+n_lit123*2);
     huf_decode_1x1(p_ctx, &st4, n_lit4  , p_dst+n_lit123*3);
 }
-
-#else
-
-static void huf_decode_4x1 (frame_context_t *p_ctx, istream_t *p_st_src, size_t n_lit, u8 *p_dst) {
-    size_t csize1 = istream_readbytes(p_st_src, 2);
-    size_t csize2 = istream_readbytes(p_st_src, 2);
-    size_t csize3 = istream_readbytes(p_st_src, 2);
-    backward_stream_t st1 = backward_stream_new(istream_fork_substream(p_st_src, csize1), p_ctx->huf_m_bits);
-    backward_stream_t st2 = backward_stream_new(istream_fork_substream(p_st_src, csize2), p_ctx->huf_m_bits);
-    backward_stream_t st3 = backward_stream_new(istream_fork_substream(p_st_src, csize3), p_ctx->huf_m_bits);
-    backward_stream_t st4 = backward_stream_new(*p_st_src                               , p_ctx->huf_m_bits);
-    size_t n_lit123 = ((n_lit+3) / 4);
-    size_t n_lit_div = n_lit123 / 5;
-    size_t n_lit_rem = n_lit123 - n_lit_div*5;
-    u8 *p_dst1 = p_dst;
-    u8 *p_dst2 = p_dst  + n_lit123;
-    u8 *p_dst3 = p_dst2 + n_lit123;
-    u8 *p_dst4 = p_dst3 + n_lit123;
-    ERROR_CORRUPT_IF(n_lit < 6);
-    for (; n_lit_div>0; n_lit_div--) {
-        backward_stream_load(&st1);
-        backward_stream_load(&st2);
-        backward_stream_load(&st3);
-        backward_stream_load(&st4);
-        for (u8 i=0; i<5; i++) {
-            u64 e1 = backward_stream_read(&st1);
-            u64 e2 = backward_stream_read(&st2);
-            u64 e3 = backward_stream_read(&st3);
-            u64 e4 = backward_stream_read(&st4);
-            *(p_dst1++) = p_ctx->huf_table[e1];
-            *(p_dst2++) = p_ctx->huf_table[e2];
-            *(p_dst3++) = p_ctx->huf_table[e3];
-            *(p_dst4++) = p_ctx->huf_table[e4];
-            backward_stream_move(&st1, p_ctx->huf_n_bits[e1]);
-            backward_stream_move(&st2, p_ctx->huf_n_bits[e2]);
-            backward_stream_move(&st3, p_ctx->huf_n_bits[e3]);
-            backward_stream_move(&st4, p_ctx->huf_n_bits[e4]);
-        }
-    }
-    backward_stream_load(&st1);
-    backward_stream_load(&st2);
-    backward_stream_load(&st3);
-    backward_stream_load(&st4);
-    for (; n_lit_rem>0; n_lit_rem--) {
-        u64 e1 = backward_stream_read(&st1);
-        u64 e2 = backward_stream_read(&st2);
-        u64 e3 = backward_stream_read(&st3);
-        u64 e4 = backward_stream_read(&st4);
-        *(p_dst1++) = p_ctx->huf_table[e1];
-        *(p_dst2++) = p_ctx->huf_table[e2];
-        *(p_dst3++) = p_ctx->huf_table[e3];
-        *(p_dst4++) = p_ctx->huf_table[e4];
-        backward_stream_move(&st1, p_ctx->huf_n_bits[e1]);
-        backward_stream_move(&st2, p_ctx->huf_n_bits[e2]);
-        backward_stream_move(&st3, p_ctx->huf_n_bits[e3]);
-        backward_stream_move(&st4, p_ctx->huf_n_bits[e4]);
-    }
-}
-
-#endif
 
 
 static size_t decode_literals (frame_context_t *p_ctx, istream_t *p_st_src) {
@@ -557,9 +499,9 @@ static size_t decode_literals (frame_context_t *p_ctx, istream_t *p_st_src) {
         }
         ERROR_CORRUPT_IF(n_lit > ZSTD_BLOCK_SIZE_MAX);
         st_huf = istream_fork_substream(p_st_src, huf_size);
-        if (lit_type == 3) {                            // 复用前一个 block 的 huffman table
-            ERROR_CORRUPT_IF(!p_ctx->huf_table_exist);  // huffman table 必须已经存在
-        } else {                                        // 需要解码 huffman table
+        if (lit_type == 3) {                            // 复用前一个 block 的 huffman table  
+            ERROR_CORRUPT_IF(!p_ctx->huf_table_exist);  // huffman table 必须已经存在  
+        } else {                                        // 需要解码 huffman table  
             decode_and_build_huf_table(p_ctx, &st_huf);
             p_ctx->huf_table_exist = 1;
         }
@@ -617,10 +559,11 @@ static size_t decode_and_build_seq_fse_table (frame_context_t *p_ctx, istream_t 
         n_seq  += istream_readbytes(p_st_src, 1);
     }
     if (n_seq) {
-                     istream_readbits(p_st_src, 2);  // 1-0 : Reserved
-        u8 mode_ml = istream_readbits(p_st_src, 2);  // 3-2 : Match_Lengths_Mode
-        u8 mode_of = istream_readbits(p_st_src, 2);  // 5-4 : Offsets_Mode
-        u8 mode_ll = istream_readbits(p_st_src, 2);  // 7-6 : Literals_Lengths_Mode
+        u8 mode_ml, mode_of, mode_ll;
+                  istream_readbits(p_st_src, 2);  // 1-0 : Reserved
+        mode_ml = istream_readbits(p_st_src, 2);  // 3-2 : Match_Lengths_Mode
+        mode_of = istream_readbits(p_st_src, 2);  // 5-4 : Offsets_Mode
+        mode_ll = istream_readbits(p_st_src, 2);  // 7-6 : Literals_Lengths_Mode
         decode_and_build_ll_or_of_or_ml_fse_table(&p_ctx->table_ll, p_st_src, 0, mode_ll);
         decode_and_build_ll_or_of_or_ml_fse_table(&p_ctx->table_of, p_st_src, 1, mode_of);
         decode_and_build_ll_or_of_or_ml_fse_table(&p_ctx->table_ml, p_st_src, 2, mode_ml);
@@ -629,26 +572,22 @@ static size_t decode_and_build_seq_fse_table (frame_context_t *p_ctx, istream_t 
 }
 
 
-static u64 parse_offset (u64 of, u64 *prev_of, u64 ll) {
-    if (of > 3) {
-        prev_of[2] = prev_of[1];
-        prev_of[1] = prev_of[0];
-        prev_of[0] = (of - 3);
-        return prev_of[0];
-    } else {
+static u64 parse_offset (u64 *prev_of, u64 of, u64 ll) {
+    u64 real_of = of - 3;
+    if (of <= 3) {
         of -= ((ll == 0) ? 0 : 1);
-        if (of == 0) {
-            return prev_of[0];
-        } else {
-            u64 real_of = (of < 3) ? prev_of[of] : (prev_of[0] - 1);
-            if (of > 1) {
-                prev_of[2] = prev_of[1];
-            }
+        real_of = (of < 3) ? prev_of[of] : prev_of[0]-1;
+    }
+    switch (of) {
+        default :
+            prev_of[2] = prev_of[1];
+        case 1 :
             prev_of[1] = prev_of[0];
             prev_of[0] = real_of;
-            return real_of;
-        }
+        case 0 :
+            break;
     }
+    return real_of;
 }
 
 
@@ -671,20 +610,21 @@ static void decode_sequences_by_fse_and_execute (frame_context_t *p_ctx, istream
             u8 ll_code = p_ctx->table_ll.table[ll_state];
             u8 of_code = p_ctx->table_of.table[of_state];
             u8 ml_code = p_ctx->table_ml.table[ml_state];
+
+            u64 of, ml, ll;
             
             ERROR_CORRUPT_IF(ll_code > MAX_LL_CODE || ml_code > MAX_ML_CODE);
 
             backward_stream_load(&bst);
-            u64 of = ((u64)1 << of_code)   + backward_stream_readmove(&bst, of_code);   // "Decoding starts by reading the Number_of_Bits required to decode Offset. It then does the same for Match_Length, and then for Literals_Length."
-            //backward_stream_load(&bst);
-            u64 ml = ML_BASELINES[ml_code] + backward_stream_readmove(&bst, ML_EXTRA_BITS[ml_code]);
-            u64 ll = LL_BASELINES[ll_code] + backward_stream_readmove(&bst, LL_EXTRA_BITS[ll_code]);
+            of = ((u64)1 << of_code)   + backward_stream_readmove(&bst, of_code);   // "Decoding starts by reading the Number_of_Bits required to decode Offset. It then does the same for Match_Length, and then for Literals_Length."
+            ml = ML_BASELINES[ml_code] + backward_stream_readmove(&bst, ML_EXTRA_BITS[ml_code]);
+            ll = LL_BASELINES[ll_code] + backward_stream_readmove(&bst, LL_EXTRA_BITS[ll_code]);
 
             memcpy(*pp_dst, p_lit, ll);
             (*pp_dst) += ll;
             p_lit += ll;
             n_lit -= ll;
-            of = parse_offset(of, p_ctx->prev_of, ll);
+            of = parse_offset(p_ctx->prev_of, of, ll);
             for (; ml>0; ml--) {
                 **pp_dst = *(*pp_dst - of);
                 (*pp_dst) ++;
@@ -743,8 +683,6 @@ static void decode_blocks_in_a_frame (frame_context_t *p_ctx, istream_t *p_st_sr
 static void parse_frame_header (istream_t *p_st_src, u8 *p_checksum_flag, size_t *p_window_size, size_t *p_decoded_len) {
     u8 dictionary_id_flag, single_segment_flag, frame_content_size_flag;
 
-    ERROR_NOT_ZSTD_IF(istream_readbytes(p_st_src, 4) != ZSTD_MAGIC_NUMBER);
-
     dictionary_id_flag      = istream_readbits(p_st_src, 2);   // 1-0  Dictionary_ID_flag"
     *p_checksum_flag        = istream_readbits(p_st_src, 1);   // 2    checksum_flag
     ERROR_CORRUPT_IF(istream_readbits(p_st_src, 1) != 0);      // 3    Reserved_bit
@@ -762,42 +700,51 @@ static void parse_frame_header (istream_t *p_st_src, u8 *p_checksum_flag, size_t
         *p_window_size     = window_base + window_add;
     }
     
-    if (single_segment_flag || frame_content_size_flag) {      // decode frame content size (decoded_size) if it exists
+    if (single_segment_flag || frame_content_size_flag) {      // decode frame content size (decoded_size) if it exists 
         const static i32 bytes_choices[] = {1, 2, 4, 8};
         i32 bytes = bytes_choices[frame_content_size_flag];
         *p_decoded_len  = istream_readbytes(p_st_src, bytes);
-        *p_decoded_len += (bytes == 2) ? 256 : 0;              // "When Field_Size is 2, the offset of 256 is added."
+        *p_decoded_len += (bytes == 2) ? 256 : 0;              // "When Field_Size is 2, the offset of 256 is added." 
     } else {
         *p_decoded_len = 0;
     }
 
     if (single_segment_flag) {                                 // when Single_Segment_flag=1
-        *p_window_size = *p_decoded_len;                       // the maximum back-reference distance is the content size itself, which can be any value from 1 to 2^64-1 bytes (16 EB)."
+        *p_window_size = *p_decoded_len;                       // the maximum back-reference distance is the content size itself, which can be any value from 1 to 2^64-1 bytes (16 EB)." 
     }
 }
 
 
 static void decode_frame (frame_context_t *p_ctx, istream_t *p_st_src, u8 **pp_dst, u8 *p_dst_limit) {
-    size_t decoded_len = 0;
-    u8 *p_dst_base = *pp_dst;
-    memset(p_ctx, 0, sizeof(*p_ctx));
-    p_ctx->prev_of[0] = 1;
-    p_ctx->prev_of[1] = 4;
-    p_ctx->prev_of[2] = 8;
-    parse_frame_header(p_st_src, &p_ctx->checksum_flag, &p_ctx->window_size, &decoded_len);
-    if (decoded_len) {
-        ERROR_O_SIZE_IF(decoded_len > (p_dst_limit - p_dst_base));
-    }
-    decode_blocks_in_a_frame(p_ctx, p_st_src, pp_dst, p_dst_limit);
-    if (decoded_len) {
-        ERROR_CORRUPT_IF(decoded_len != (*pp_dst - p_dst_base));
+    u64 magic = istream_readbytes(p_st_src, 4);
+    if (magic == ZSTD_MAGIC_NUMBER) {
+        size_t decoded_len = 0;
+        u8 *p_dst_base = *pp_dst;
+        memset(p_ctx, 0, sizeof(*p_ctx));
+        p_ctx->prev_of[0] = 1;
+        p_ctx->prev_of[1] = 4;
+        p_ctx->prev_of[2] = 8;
+        parse_frame_header(p_st_src, &p_ctx->checksum_flag, &p_ctx->window_size, &decoded_len);
+        if (decoded_len) {
+            ERROR_O_SIZE_IF(decoded_len > (p_dst_limit - p_dst_base));
+        }
+        decode_blocks_in_a_frame(p_ctx, p_st_src, pp_dst, p_dst_limit);
+        if (decoded_len) {
+            ERROR_CORRUPT_IF(decoded_len != (*pp_dst - p_dst_base));
+        }
+    } else if (SKIP_MAGIC_NUMBER_MIN <= magic && magic <= SKIP_MAGIC_NUMBER_MAX) {
+        size_t skip_frame_len = istream_readbytes(p_st_src, 4);
+        istream_skip(p_st_src, skip_frame_len);
+        // printf("  skip frame length = %lu\n", skip_frame_len);
+    } else {
+        ERROR_NOT_ZSTD_IF(1);
     }
 }
 
 
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/// ZSTD 解码函数（外部可调用）
+/// ZSTD 解码函数（外部可调用） 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 size_t ZSTD_decompress (u8 *p_src, size_t src_len, u8 *p_dst, size_t dst_capacity) {
