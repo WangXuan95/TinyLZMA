@@ -1,9 +1,8 @@
-
 #ifndef   __FILE_IO_H__
 #define   __FILE_IO_H__
 
-#include <stdint.h>
 #include <stddef.h>
+#include <stdint.h>
 
 
 // Function  : read all data from file to a buffer.

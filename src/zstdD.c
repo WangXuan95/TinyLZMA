@@ -1,6 +1,3 @@
-/// Zstandard educational decoder implementation (simplified)  
-/// See https://github.com/facebook/zstd/blob/dev/doc/zstd_compression_format.md  
-
 #include <stddef.h>   // size_t
 #include <stdint.h>   // uint8_t, uint16_t, int32_t, uint64_t
 #include <stdlib.h>   // malloc, free, exit
@@ -747,9 +744,9 @@ static void decode_frame (frame_context_t *p_ctx, istream_t *p_st_src, u8 **pp_d
 /// ZSTD 解码函数（外部可调用） 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-size_t ZSTD_decompress (u8 *p_src, size_t src_len, u8 *p_dst, size_t dst_capacity) {
+void zstdD (u8 *p_src, size_t src_len, u8 *p_dst, size_t *p_dst_len) {
     u8 *p_dst_base  = p_dst;
-    u8 *p_dst_limit = p_dst + dst_capacity;
+    u8 *p_dst_limit = p_dst + (*p_dst_len);
     istream_t st_src = istream_new(p_src, src_len);
     frame_context_t *p_ctx = (frame_context_t*)malloc(sizeof(frame_context_t));
     ERROR_MALLOC_IF(p_ctx == NULL);
@@ -757,5 +754,5 @@ size_t ZSTD_decompress (u8 *p_src, size_t src_len, u8 *p_dst, size_t dst_capacit
         decode_frame(p_ctx, &st_src, &p_dst, p_dst_limit);
     }
     free(p_ctx);
-    return (p_dst - p_dst_base);
+    *p_dst_len = (p_dst - p_dst_base);
 }

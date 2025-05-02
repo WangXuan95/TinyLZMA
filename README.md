@@ -3,21 +3,25 @@
 TinyZZZ
 ===========================
 
-TinyZZZ is a simple, standalone data compressor/decompressor which supports several popular data compression algorithms, including [GZIP](https://www.rfc-editor.org/rfc/rfc1952), [ZSTD](https://github.com/facebook/zstd), [LZMA](https://www.7-zip.org/sdk.html) . These algorithms are written in C language, unlike the official code implementation, this code mainly focuses on simplicity and easy to understand.
+TinyZZZ is a simple, standalone data compressor/decompressor which supports several popular data compression algorithms, including [GZIP](https://www.rfc-editor.org/rfc/rfc1952), [LZ4](https://github.com/lz4/lz4), [ZSTD](https://github.com/facebook/zstd), [LZMA](https://www.7-zip.org/sdk.html) . These algorithms are written in C language, unlike the official code implementation, this code mainly focuses on simplicity and easy to understand.
 
 TinyZZZ currently supports:
 
-|                       format                       | file suffix | compress supported                     | decompress supported |          source code          |
-| :------------------------------------------------: | :---------: | :------------------------------------: | :------------------: | :---------------------------: |
-| **[GZIP](https://www.rfc-editor.org/rfc/rfc1952)** |     .gz     | :heavy_check_mark:                     | :x:                  | [500 lines of C](./src/GZIP)  |
-|    **[ZSTD](https://github.com/facebook/zstd)**    |    .zst     | :x:                                    | :heavy_check_mark:   | [800 lines of C](./src/ZSTD)  |
-|     **[LZMA](https://www.7-zip.org/sdk.html)**     |    .lzma    | :heavy_check_mark:                     | :heavy_check_mark:   | [1400 lines of C](./src/LZMA) |
-|                      **ZIP**                       |    .zip     | :heavy_check_mark: (in LZMA algorithm) | :x:                  |                               |
+|                       format                       | file suffix | compress                               | decompress                      |
+| :------------------------------------------------: | :---------: | :------------------------------------: | :-----------------------------: |
+| **[GZIP](https://www.rfc-editor.org/rfc/rfc1952)** |    .gz      | [510 lines of C](./src/gzipC.c)        | :x: not yet supported           |
+| **[LZ4](https://github.com/lz4/lz4)**              |    .lz4     | [170 lines of C](./src/lz4C.c)         | [190 lines of C](./src/lz4D.c)  |
+| **[ZSTD](https://github.com/facebook/zstd)**       |    .zst     | :x: not yet supported                  | [760 lines of C](./src/zstdD.c) |
+| **[LZMA](https://www.7-zip.org/sdk.html)**         |    .lzma    | [780 lines of C](./src/lzmaC.c)        | [480 lines of C](./src/lzmaD.c) |
 
 
 #### About GZIP
 
 [GZIP](https://www.rfc-editor.org/rfc/rfc1952) is an old, famous lossless data compression algorithm which has excellent compatibility. The core compression algorithm of GZIP is [Deflate](https://www.rfc-editor.org/rfc/rfc1951). The file name suffix of compressed GZIP file is ".gz"
+
+#### About LZ4
+
+[LZ4](https://github.com/lz4/lz4) is a new, lightweight lossless data compression algorithm with very high decompression speed. The file name suffix of compressed LZ4 file is ".lz4"
 
 #### About ZSTD
 
@@ -25,11 +29,16 @@ TinyZZZ currently supports:
 
 #### About LZMA
 
-[LZMA](https://www.7-zip.org/sdk.html) is a lossless data compression algorithm with higher compression ratio than GZIP, BZIP, and ZSTD. Several archive container formats supports LZMA:
+[LZMA](https://www.7-zip.org/sdk.html) is a lossless data compression algorithm with higher compression ratio than LZ4, GZIP, BZIP, and ZSTD. Several archive container formats supports LZMA:
 
 - ".lzma" is a very simple format to contain LZMA, which is legacy and gradually replaced by ".xz" format.
 - ".7z" and ".xz" format, whose default compression method is LZMA.
-- ".zip" format also supports LZMA, although the default compression method of ".zip" is [Deflate](https://www.rfc-editor.org/rfc/rfc1951).
+
+#### About ZIP
+
+[ZIP](https://docs.fileformat.com/compression/zip/) is not a data compression algorithm, but a container format that supports file packaging and compressing by many compression algorithms.
+
+This code supports compress a file to ZIP container by deflate algorithm or LZMA algorithm.
 
 　
 
@@ -40,19 +49,31 @@ TinyZZZ currently supports:
 On Linux, run following command to compile. The output Linux binary file is [tinyZZZ](./tinyZZZ)
 
 ```bash
-gcc src/*.c src/GZIP/*.c src/ZSTD/*.c src/LZMA/*.c -O2 -Wall -o tinyZZZ
+gcc src/*.c -O2 -Wall -o tinyZZZ
 ```
 
 　
 
 　
 
-## Windows Build
+## Windows Build (MinGW)
 
 If you installed MinGW in Windows, run following command to compile. The output executable file is [tinyZZZ.exe](./tinyZZZ.exe)
 
 ```powershell
-gcc src\*.c src\GZIP\*.c src\ZSTD\*.c src\LZMA\*.c -O2 -Wall -o tinyZZZ.exe
+gcc src\*.c -O2 -Wall -o tinyZZZ.exe
+```
+
+　
+
+　
+
+## Windows Build (MSVC)
+
+If you added MSVC compiler (cl.exe) to environment, run following command to compile. The output executable file is [tinyZZZ.exe](./tinyZZZ.exe)
+
+```powershell
+cl src\*.c /Ox /FetinyZZZ.exe
 ```
 
 　
@@ -65,23 +86,23 @@ Run TinyZZZ to show usage:
 
 ```
 └─$ ./tinyZZZ
-|----------------------------------------------------------------------|
-|  Usage :                                                             |
-|   1. decompress a GZIP file                                          |
-|        (not yet supported!)                                          |
-|   2. compress a file to GZIP file                                    |
-|        tinyZZZ.exe -c --gzip <input_file> <output_file(.gz)>         |
-|   3. decompress a ZSTD file                                          |
-|        tinyZZZ.exe -d --zstd <input_file(.zst)> <output_file>        |
-|   4. compress a file to ZSTD file                                    |
-|        (not yet supported!)                                          |
-|   5. decompress a LZMA file                                          |
-|        tinyZZZ.exe -d --lzma <input_file(.lzma)> <output_file>       |
-|   6. compress a file to LZMA file                                    |
-|        tinyZZZ.exe -c --lzma <input_file> <output_file(.lzma)>       |
-|   7. compress a file to LZMA and pack to a .zip container file       |
-|        tinyZZZ.exe -c --lzma --zip <input_file> <output_file(.zip)>  |
-|----------------------------------------------------------------------|
+|-------------------------------------------------------------------------------------------|
+|  Usage :                                                                                  |
+|   - decompress a GZIP file       :  *** not yet supported! ***                            |
+|   - compress a file to GZIP file :  tinyZZZ -c --gzip <input_file> <output_file(.gz)>     |
+|   - decompress a LZ4 file        :  tinyZZZ -d --lz4  <input_file(.lz4)> <output_file>    |
+|   - compress a file to LZ4 file  :  tinyZZZ -c --lz4  <input_file> <output_file(.lz4)>    |
+|   - decompress a ZSTD file       :  tinyZZZ -d --zstd <input_file(.zst)> <output_file>    |
+|   - compress a file to ZSTD file :  *** not yet supported! ***                            |
+|   - decompress a LZMA file       :  tinyZZZ -d --lzma <input_file(.lzma)> <output_file>   |
+|   - compress a file to LZMA file :  tinyZZZ -c --lzma <input_file> <output_file(.lzma)>   |
+|-------------------------------------------------------------------------------------------|
+|  Usage (ZIP) :                                                                            |
+|   - compress a file to ZIP container file using deflate (GZIP) method                     |
+|       tinyZZZ -c --gzip --zip <input_file> <output_file(.zip)>                            |
+|   - compress a file to ZIP container file using LZMA method                               |
+|       tinyZZZ -c --lzma --zip <input_file> <output_file(.zip)>                            |
+|-------------------------------------------------------------------------------------------|
 ```
 
 　
@@ -112,7 +133,25 @@ Run TinyZZZ to show usage:
 ./tinyZZZ -d --lzma example.txt.lzma example.txt
 ```
 
-**Example5**: compress `example.txt` to `example.zip` use following command. The outputting ".zip" file can be extracted by many other software, such as [7ZIP](https://www.7-zip.org), [WinRAR](https://www.rarlab.com/), etc.
+**Example5**: compress `example.txt` to `example.txt.lz4` use following command.
+
+```bash
+./tinyZZZ -c --lz4 example.txt example.txt.lz4
+```
+
+**Example6**: decompress `example.txt.lz4` to `example.txt` use following command.
+
+```bash
+./tinyZZZ -d --lz4 example.txt.lz4 example.txt
+```
+
+**Example7**: compress `example.txt` to `example.zip` use following command (method=deflate). The outputting ".zip" file can be extracted by many other software, such as [7ZIP](https://www.7-zip.org), [WinRAR](https://www.rarlab.com/), etc.
+
+```bash
+./tinyZZZ -c --gzip --zip example.txt example.zip
+```
+
+**Example8**: compress `example.txt` to `example.zip` use following command (method=LZMA). The outputting ".zip" file can be extracted by many other software, such as [7ZIP](https://www.7-zip.org), [WinRAR](https://www.rarlab.com/), etc.
 
 ```bash
 ./tinyZZZ -c --lzma --zip example.txt example.zip
@@ -158,6 +197,10 @@ It may report a error : *"ERROR: There are some data after the end of the payloa
 
 - GZIP specification: https://www.rfc-editor.org/rfc/rfc1951
 - Deflate algorithm specification: https://www.rfc-editor.org/rfc/rfc1952
+
+- LZ4 official code: https://github.com/lz4/lz4
+
+- LZ4 specification: https://github.com/lz4/lz4/blob/dev/doc/lz4_Frame_format.md , https://github.com/lz4/lz4/blob/dev/doc/lz4_Block_format.md
 
 - ZSTD specification: https://www.rfc-editor.org/rfc/rfc8878
 

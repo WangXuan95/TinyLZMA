@@ -4,47 +4,47 @@
 #include <time.h>
 
 #include "FileIO.h"
-#include "GZIP/TinyGzipCompress.h"
-#include "ZSTD/TinyZstdDecompress.h"
-#include "LZMA/TinyLzmaCompress.h"
-#include "LZMA/TinyLzmaDecompress.h"
 
-
-#define  IS_64b_SYSTEM  (sizeof(size_t) == 8)
+#include "gzipC.h"
+#include "lz4D.h"
+#include "lz4C.h"
+#include "zstdD.h"
+#include "lzmaD.h"
+#include "lzmaC.h"
+#include "zipC.h"
 
 
 
 const char *USAGE =
-    "|----------------------------------------------------------------------|\n"
-    "|  TinyZZZ v0.3                https://github.com/WangXuan95/TinyZZZ   |\n"
-    "|    TinyZZZ is a simple, standalone data compressor/decompressor      |\n"
-    "|    which supports several popular data compression algorithms,       |\n"
-    "|    including GZIP, ZSTD, and LZMA.                                   |\n"
-    "|    These algorithms are written in C language, unlike the official   |\n"
-    "|    code implementation, this code mainly focuses on simplicity       |\n"
-    "|    and easy to understand.                                           |\n"
-    "|----------------------------------------------------------------------|\n"
-    "|  currently support:                                                  |\n"
-    "|     - GZIP compress                                                  |\n"
-    "|     - ZSTD decompress                                                |\n"
-    "|     - LZMA compress and decompress                                   |\n"
-    "|----------------------------------------------------------------------|\n"
-    "|  Usage :                                                             |\n"
-    "|   1. decompress a GZIP file                                          |\n"
-    "|        (not yet supported!)                                          |\n"
-    "|   2. compress a file to GZIP file                                    |\n"
-    "|        tinyZZZ.exe -c --gzip <input_file> <output_file(.gz)>         |\n"
-    "|   3. decompress a ZSTD file                                          |\n"
-    "|        tinyZZZ.exe -d --zstd <input_file(.zst)> <output_file>        |\n"
-    "|   4. compress a file to ZSTD file                                    |\n"
-    "|        (not yet supported!)                                          |\n"
-    "|   5. decompress a LZMA file                                          |\n"
-    "|        tinyZZZ.exe -d --lzma <input_file(.lzma)> <output_file>       |\n"
-    "|   6. compress a file to LZMA file                                    |\n"
-    "|        tinyZZZ.exe -c --lzma <input_file> <output_file(.lzma)>       |\n"
-    "|   7. compress a file to LZMA and pack to a .zip container file       |\n"
-    "|        tinyZZZ.exe -c --lzma --zip <input_file> <output_file(.zip)>  |\n"
-    "|----------------------------------------------------------------------|\n";
+    "|-------------------------------------------------------------------------------------------|\n"
+    "|  TinyZZZ v0.4                                     https://github.com/WangXuan95/TinyZZZ   |\n"
+    "|    TinyZZZ is a simple, standalone data compressor/decompressor which supports several    |\n"
+    "|    popular data compression algorithms, including GZIP, LZ4, ZSTD, and LZMA. These        |\n"
+    "|    algorithms are written in C language, unlike the official code implementation,         |\n"
+    "|    this code mainly focuses on simplicity and easy to understand.                         |\n"
+    "|-------------------------------------------------------------------------------------------|\n"
+    "|  currently support:                                                                       |\n"
+    "|   - GZIP compress                                                                         |\n"
+    "|   - LZ4  decompress and compress                                                          |\n"
+    "|   - ZSTD decompress                                                                       |\n"
+    "|   - LZMA decompress and compress                                                          |\n"
+    "|-------------------------------------------------------------------------------------------|\n"
+    "|  Usage :                                                                                  |\n"
+    "|   - decompress a GZIP file       :  *** not yet supported! ***                            |\n"
+    "|   - compress a file to GZIP file :  tinyZZZ -c --gzip <input_file> <output_file(.gz)>     |\n"
+    "|   - decompress a LZ4 file        :  tinyZZZ -d --lz4  <input_file(.lz4)> <output_file>    |\n"
+    "|   - compress a file to LZ4 file  :  tinyZZZ -c --lz4  <input_file> <output_file(.lz4)>    |\n"
+    "|   - decompress a ZSTD file       :  tinyZZZ -d --zstd <input_file(.zst)> <output_file>    |\n"
+    "|   - compress a file to ZSTD file :  *** not yet supported! ***                            |\n"
+    "|   - decompress a LZMA file       :  tinyZZZ -d --lzma <input_file(.lzma)> <output_file>   |\n"
+    "|   - compress a file to LZMA file :  tinyZZZ -c --lzma <input_file> <output_file(.lzma)>   |\n"
+    "|-------------------------------------------------------------------------------------------|\n"
+    "|  Usage (ZIP) :                                                                            |\n"
+    "|   - compress a file to ZIP container file using deflate (GZIP) method                     |\n"
+    "|       tinyZZZ -c --gzip --zip <input_file> <output_file(.zip)>                            |\n"
+    "|   - compress a file to ZIP container file using LZMA method                               |\n"
+    "|       tinyZZZ -c --lzma --zip <input_file> <output_file(.zip)>                            |\n"
+    "|-------------------------------------------------------------------------------------------|\n";
 
 
 
@@ -65,17 +65,20 @@ static void removeDirectoryPathFromFileName (char *fname) {
 
 
 
+#define  IS_64b_SYSTEM  (sizeof(size_t) == 8)
+
+
+
 int main (int argc, char **argv) {
 
-    enum     {ACTION_NONE, COMPRESS, DECOMPRESS} type_action = ACTION_NONE;
-    enum     {FORMAT_NONE, GZIP, ZSTD, LZMA}     type_format = FORMAT_NONE;
-    enum     {NATIVE, ZIP}                    type_container = NATIVE;
+    enum     {ACTION_NONE, COMPRESS, DECOMPRESS}  type_action = ACTION_NONE;
+    enum     {FORMAT_NONE, GZIP, LZ4, ZSTD, LZMA} type_format = FORMAT_NONE;
+    enum     {NATIVE, ZIP}                     type_container = NATIVE;
 
     char    *fname_src=NULL, *fname_dst=NULL;
     uint8_t *p_src         , *p_dst;
-    size_t   src_len       ,  dst_len , MAX_DST_LEN;
-
-    MAX_DST_LEN = IS_64b_SYSTEM ? 0x80000000 : 0x20000000;
+    size_t   src_len       ,  dst_len , MAX_DST_LEN = IS_64b_SYSTEM ? 0x80000000 : 0x20000000;
+    int      ret_code = 0;
 
 
     // parse command line --------------------------------------------------------------------------------------------------
@@ -88,6 +91,8 @@ int main (int argc, char **argv) {
                 type_action = DECOMPRESS;
             } else if (strcmp(arg, "--gzip") == 0) {
                 type_format = GZIP;
+            } else if (strcmp(arg, "--lz4" ) == 0) {
+                type_format = LZ4;
             } else if (strcmp(arg, "--zstd") == 0) {
                 type_format = ZSTD;
             } else if (strcmp(arg, "--lzma") == 0) {
@@ -153,54 +158,58 @@ int main (int argc, char **argv) {
     
     // do compress / decompress --------------------------------------------------------------------------------------------
     switch (type_format) {
-        case GZIP :
+        case GZIP : {
             if (type_action == DECOMPRESS) {
                 printf("*** error : GZIP decompress is not yet supported\n");
                 return -1;
+            } else if (type_container != ZIP) {
+                ret_code = gzipC(p_src, src_len, p_dst, &dst_len);
             } else {
-                if (type_container != ZIP) {
-                    dst_len = gzipCompress(p_dst, p_src, src_len);  // TODO: handle dst buffer overflow
-                } else {
-                    printf("*** error : GZIP compress to ZIP container is not yet supported\n");
-                    return -1;
-                }
+                removeDirectoryPathFromFileName(fname_src);
+                ret_code = zipCdeflate(p_src, src_len, p_dst, &dst_len, fname_src);
             }
             break;
-        
-        case ZSTD :
+        }
+        case LZMA : {
             if (type_action == DECOMPRESS) {
-                dst_len = ZSTD_decompress(p_src, src_len, p_dst, dst_len);
+                ret_code = lzmaD(p_src, src_len, p_dst, &dst_len);
+            } else if (type_container != ZIP) {
+                ret_code = lzmaC(p_src, src_len, p_dst, &dst_len);
+            } else {
+                removeDirectoryPathFromFileName(fname_src);
+                ret_code = zipClzma(p_src, src_len, p_dst, &dst_len, fname_src);
+            }
+            break;
+        }
+        case LZ4 : {
+            if (type_action == DECOMPRESS) {
+                ret_code = lz4D(p_src, src_len, p_dst, &dst_len);
+            } else if (type_container != ZIP) {
+                ret_code = lz4C(p_src, src_len, p_dst, &dst_len);
+            } else {
+                printf("*** error : LZ4 compress to ZIP is not supported\n");
+                return -1;
+            }
+            break;
+        }
+        case ZSTD : {
+            if (type_action == DECOMPRESS) {
+                zstdD(p_src, src_len, p_dst, &dst_len);
             } else {
                 printf("*** error : ZSTD compress is not yet supported\n");
                 return -1;
             }
             break;
-        
-        case LZMA : {
-            int res_code;
-            if (type_action == DECOMPRESS) {
-                printf("LZMA decompressing...\n");
-                res_code = tinyLzmaDecompress(p_src, src_len, p_dst, &dst_len);
-            } else {
-                if (type_container != ZIP) {
-                    printf("LZMA compressing ...\n");
-                    res_code = tinyLzmaCompress(p_src, src_len, p_dst, &dst_len);
-                } else {
-                    printf("LZMA compressing (to ZIP container)...\n");
-                    removeDirectoryPathFromFileName(fname_src);
-                    res_code = tinyLzmaCompressToZipContainer(p_src, src_len, p_dst, &dst_len, fname_src);
-                }
-            }
-            if (res_code) {
-                printf("*** error : failed (return_code = %d)\n", res_code);
-                return res_code;
-            }
-            break;
         }
-
-        case FORMAT_NONE :
+        case FORMAT_NONE : {
             printf(USAGE);
             return -1;
+        }
+    }
+    
+    if (ret_code) {
+        printf("*** error : failed (return_code = %d)\n", ret_code);
+        return ret_code;
     }
     
 
@@ -208,11 +217,10 @@ int main (int argc, char **argv) {
     
     printf("output length    = %lu\n", dst_len);
     
-    {
-        size_t decomp_size = (type_action==COMPRESS) ? src_len : dst_len;
-        double time = (double)clock()/CLOCKS_PER_SEC;
-        printf("time consumed    = %.3f s\n", time);
-        printf("speed            = %.0f kB/s\n", (0.001*decomp_size)/time );
+    {   size_t decomp_size = (type_action==COMPRESS) ? src_len : dst_len;
+        double time  = (double)clock() / CLOCKS_PER_SEC;
+        double speed = (0.001*decomp_size) / (time + 0.00000001);
+        printf("time consumed    = %.3f sec  (%.0f kB/s)\n", time, speed);
     }
     
     if (saveToFile(p_dst, dst_len, fname_dst) < 0) {
