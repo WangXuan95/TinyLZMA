@@ -22,8 +22,8 @@ uint8_t *loadFromFile (size_t *p_len, const char *filename);
 //     size_t len           : data length
 //     const char *filename : file name
 // Return    :
-//     0 : failed
-//     1 : success
+//     1 : failed
+//     0 : success
 int saveToFile (const uint8_t *p_buf, size_t len, const char *filename);
 
 

@@ -244,7 +244,7 @@ int main (int argc, char **argv) {
         printf("time consumed    = %.3f sec  (%.0f kB/s)\n", time, speed);
     }
     
-    if (saveToFile(p_dst, dst_len, fname_dst) < 0) {
+    if (saveToFile(p_dst, dst_len, fname_dst)) {
         printf("*** error : save file %s failed\n", fname_dst);
         return -1;
     }
