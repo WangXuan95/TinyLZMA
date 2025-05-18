@@ -9,7 +9,7 @@
 #define R_NOT_LZ4                       5
 #define R_NOT_YET_SUPPORT               101
 
-#define RET_WHEN_ERR(err_code)          { if (err_code)  return err_code; }
+#define RET_WHEN_ERR(err_code)          { int ec = (err_code); if (ec)  return ec; }
 #define RET_ERR_IF(err_code,condition)  { if (condition) return err_code; }
 
 #define MAGIC_LZ4LEGACY                 0x184C2102U

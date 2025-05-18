@@ -1,9 +1,7 @@
-#include <stddef.h>
-#include <stdint.h>
-#include <stdlib.h>                     // this code only use malloc and free
+#include <stddef.h>   // size_t
+#include <stdint.h>   // uint8_t, uint16_t, uint32_t
+#include <stdlib.h>   // malloc, free
 
-
-// return codes --------------------
 #define   R_OK                           0
 #define   R_ERR_MEMORY_RUNOUT            1
 #define   R_ERR_UNSUPPORTED              2
@@ -11,6 +9,8 @@
 #define   R_ERR_INPUT_OVERFLOW           4
 #define   R_ERR_DATA                     5
 #define   R_ERR_OUTPUT_LEN_MISMATCH      6
+
+#define RET_WHEN_ERR(err_code)          { int ec = (err_code); if (ec)  return ec; }
 
 
 
@@ -21,13 +21,6 @@
 //    uint32_t : as generic integers
 //    size_t   : as data length
 
-
-
-#define RET_IF_ERROR(expression)  {     \
-    int res = (expression);             \
-    if (res != R_OK)                    \
-        return res;                     \
-}
 
 
 
@@ -456,7 +449,7 @@ int lzmaD (uint8_t *p_src, size_t src_len, uint8_t *p_dst, size_t *p_dst_len) {
     if (src_len < LZMA_HEADER_LEN)
         return R_ERR_INPUT_OVERFLOW;
     
-    RET_IF_ERROR( parseLzmaHeader(p_src, &lc, &lp, &pb, &dict_len, &uncompressed_len, &uncompressed_len_known) )
+    RET_WHEN_ERR( parseLzmaHeader(p_src, &lc, &lp, &pb, &dict_len, &uncompressed_len, &uncompressed_len_known) )
     
     //printf("[LZMAd] lc=%d   lp=%d   pb=%d   dict_len=%u\n", lc, lp, pb, dict_len);
     
@@ -469,7 +462,7 @@ int lzmaD (uint8_t *p_src, size_t src_len, uint8_t *p_dst, size_t *p_dst_len) {
         //printf("[LZMAd] uncompressed length is not in header, decoding using output buffer length = %lu\n" , *p_dst_len);
     }
     
-    RET_IF_ERROR( lzmaDecode(p_src+LZMA_HEADER_LEN, src_len-LZMA_HEADER_LEN, p_dst, p_dst_len, lc, lp, pb) );
+    RET_WHEN_ERR( lzmaDecode(p_src+LZMA_HEADER_LEN, src_len-LZMA_HEADER_LEN, p_dst, p_dst_len, lc, lp, pb) );
     
     if (uncompressed_len_known && uncompressed_len != *p_dst_len)
         return R_ERR_OUTPUT_LEN_MISMATCH;

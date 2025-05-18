@@ -5,7 +5,7 @@
 #define R_DST_OVERFLOW                  1
 #define R_SRC_OVERFLOW                  2
 
-#define RET_WHEN_ERR(err_code)          { if (err_code)  return err_code; }
+#define RET_WHEN_ERR(err_code)          { int ec = (err_code); if (ec)  return ec; }
 #define RET_ERR_IF(err_code,condition)  { if (condition) return err_code; }
 
 #define MIN_ML                          4

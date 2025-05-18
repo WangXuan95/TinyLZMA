@@ -11,8 +11,7 @@ int deflateEncode (uint8_t *p_src, size_t src_len, uint8_t *p_dst, size_t *p_dst
 #define   R_ERR_UNSUPPORTED              2
 #define   R_ERR_OUTPUT_OVERFLOW          3
 
-
-#define   RET_IF_ERROR(expression)  { int res = (expression);   if (res != R_OK) return res; }
+#define   RET_WHEN_ERR(err_code)          { int ec = (err_code); if (ec)  return ec; }
 
 
 static size_t getStringLength (const char *string) {
@@ -200,11 +199,11 @@ static int zipC (uint8_t *p_src, size_t src_len, uint8_t *p_dst, size_t *p_dst_l
     
     zip_hdr_len = *p_dst_len;                                                                           // set available space for ZIP header
     
-    RET_IF_ERROR( writeZipHeader(p_dst, &zip_hdr_len, 0, 0, src_len, file_name_in_zip, comp_method) );  // note that some fields are unknown and filled using "0", we should rewrite it later
+    RET_WHEN_ERR( writeZipHeader(p_dst, &zip_hdr_len, 0, 0, src_len, file_name_in_zip, comp_method) );  // note that some fields are unknown and filled using "0", we should rewrite it later
     
     if (comp_method == COMP_METHOD_LZMA) {
         lzma_prop_len = *p_dst_len - zip_hdr_len;                                                       // set available space for ZIP LZMA property
-        RET_IF_ERROR( writeZipLzmaProperty(p_dst+zip_hdr_len, &lzma_prop_len) );
+        RET_WHEN_ERR( writeZipLzmaProperty(p_dst+zip_hdr_len, &lzma_prop_len) );
     } else {
         lzma_prop_len = 0;
     }
@@ -212,9 +211,9 @@ static int zipC (uint8_t *p_src, size_t src_len, uint8_t *p_dst, size_t *p_dst_l
     cmprs_len = *p_dst_len - zip_hdr_len - lzma_prop_len;                                               // set available space for LZMA compressed data
     
     if (comp_method == COMP_METHOD_LZMA) {
-        RET_IF_ERROR(   lzmaEncode(p_src, src_len, p_dst+zip_hdr_len+lzma_prop_len, &cmprs_len, 1));
+        RET_WHEN_ERR(   lzmaEncode(p_src, src_len, p_dst+zip_hdr_len+lzma_prop_len, &cmprs_len, 1));
     } else {
-        RET_IF_ERROR(deflateEncode(p_src, src_len, p_dst+zip_hdr_len+lzma_prop_len, &cmprs_len));
+        RET_WHEN_ERR(deflateEncode(p_src, src_len, p_dst+zip_hdr_len+lzma_prop_len, &cmprs_len));
     }
     
     if (cmprs_len > ZIP_COMPRESSED_MAX_LEN) {
@@ -227,9 +226,9 @@ static int zipC (uint8_t *p_src, size_t src_len, uint8_t *p_dst, size_t *p_dst_l
     
     zip_ftr_len = *p_dst_len - zip_hdr_len - cmprs_len;                                                 // set available space for ZIP footer
     
-    RET_IF_ERROR( writeZipFooter(p_dst+zip_hdr_len+cmprs_len, &zip_ftr_len, crc, cmprs_len, src_len, file_name_in_zip, zip_hdr_len+cmprs_len, comp_method) );
+    RET_WHEN_ERR( writeZipFooter(p_dst+zip_hdr_len+cmprs_len, &zip_ftr_len, crc, cmprs_len, src_len, file_name_in_zip, zip_hdr_len+cmprs_len, comp_method) );
     
-    RET_IF_ERROR( writeZipHeader(p_dst,                       &zip_hdr_len, crc, cmprs_len, src_len, file_name_in_zip, comp_method) );   // rewrite ZIP header, since some fields are not writed previously.
+    RET_WHEN_ERR( writeZipHeader(p_dst,                       &zip_hdr_len, crc, cmprs_len, src_len, file_name_in_zip, comp_method) );   // rewrite ZIP header, since some fields are not writed previously.
     
     *p_dst_len = zip_hdr_len + cmprs_len + zip_ftr_len;                                                 // the total output length = ZIP header length + compressed data length (include ZIP LZMA property) + ZIP footer length
     

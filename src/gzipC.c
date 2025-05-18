@@ -1,16 +1,15 @@
 #include <stddef.h>  // size_t
 #include <stdint.h>  // uint8_t, uint32_t
 
-
-#define     DISABLE_DYNAMIC_HUFFMAN    0                                         // set this to 1 to disable dynamic huffman
-
-
 #define R_OK                            0
 #define R_DST_OVERFLOW                  1
 #define R_SRC_OVERFLOW                  2
 
-#define RET_WHEN_ERR(err_code)          { if (err_code)  return err_code; }
+#define RET_WHEN_ERR(err_code)          { int ec = (err_code); if (ec)  return ec; }
 #define RET_ERR_IF(err_code,condition)  { if (condition) return err_code; }
+
+
+#define     DISABLE_DYNAMIC_HUFFMAN    0                                         // set this to 1 to disable dynamic huffman
 
 
 #ifndef     NULL

@@ -3,42 +3,28 @@
 TinyZZZ
 ===========================
 
-TinyZZZ is a simple, standalone data compressor/decompressor which supports several popular data compression algorithms, including [GZIP](https://www.rfc-editor.org/rfc/rfc1952), [LZ4](https://github.com/lz4/lz4), [ZSTD](https://github.com/facebook/zstd), [LZMA](https://www.7-zip.org/sdk.html) . These algorithms are written in C language, unlike the official code implementation, this code mainly focuses on simplicity and easy to understand.
+TinyZZZ is a simple, standalone data compressor/decompressor which supports several popular data compression algorithms, including [GZIP](https://www.rfc-editor.org/rfc/rfc1952), [LZ4](https://github.com/lz4/lz4), [ZSTD](https://github.com/facebook/zstd), [LZMA](https://www.7-zip.org/sdk.html) and [LPAQ8](https://mattmahoney.net/dc/#lpaq). These algorithms are written in C language, unlike the official code implementation, this code mainly focuses on simplicity and easy to understand.
 
-TinyZZZ currently supports:
+TinyZZZ currently supports following compression algorithms:
 
-|                       format                       | file suffix | compress                               | decompress                      |
-| :------------------------------------------------: | :---------: | :------------------------------------: | :-----------------------------: |
-| **[GZIP](https://www.rfc-editor.org/rfc/rfc1952)** |    .gz      | [510 lines of C](./src/gzipC.c)        | :x: not yet supported           |
-| **[LZ4](https://github.com/lz4/lz4)**              |    .lz4     | [170 lines of C](./src/lz4C.c)         | [190 lines of C](./src/lz4D.c)  |
-| **[ZSTD](https://github.com/facebook/zstd)**       |    .zst     | :x: not yet supported                  | [760 lines of C](./src/zstdD.c) |
-| **[LZMA](https://www.7-zip.org/sdk.html)**         |    .lzma    | [780 lines of C](./src/lzmaC.c)        | [480 lines of C](./src/lzmaD.c) |
+|                       format                       | file suffix |             compress              |            decompress             |
+| :------------------------------------------------: | :---------: | :-------------------------------: | :-------------------------------: |
+| **[GZIP](https://www.rfc-editor.org/rfc/rfc1952)** |     .gz     |  [510 lines of C](./src/gzipC.c)  |       :x: not yet supported       |
+|       **[LZ4](https://github.com/lz4/lz4)**        |    .lz4     |  [170 lines of C](./src/lz4C.c)   |  [190 lines of C](./src/lz4D.c)   |
+|    **[ZSTD](https://github.com/facebook/zstd)**    |    .zst     |       :x: not yet supported       |  [760 lines of C](./src/zstdD.c)  |
+|     **[LZMA](https://www.7-zip.org/sdk.html)**     |    .lzma    |  [780 lines of C](./src/lzmaC.c)  |  [480 lines of C](./src/lzmaD.c)  |
+|   **[LPAQ8](https://mattmahoney.net/dc/#lpaq)**    |   .lpaq8    | [860 lines of C](./src/lpaq8CD.c) | [860 lines of C](./src/lpaq8CD.c) |
 
+Explanation:
 
-#### About GZIP
-
-[GZIP](https://www.rfc-editor.org/rfc/rfc1952) is an old, famous lossless data compression algorithm which has excellent compatibility. The core compression algorithm of GZIP is [Deflate](https://www.rfc-editor.org/rfc/rfc1951). The file name suffix of compressed GZIP file is ".gz"
-
-#### About LZ4
-
-[LZ4](https://github.com/lz4/lz4) is a new, lightweight lossless data compression algorithm with very high decompression speed. The file name suffix of compressed LZ4 file is ".lz4"
-
-#### About ZSTD
-
-[ZSTD](https://github.com/facebook/zstd) (Zstandard) is a new lossless data compression algorithm with high compression ratio and high decompression speed. The file name suffix of compressed ZSTD file is ".zstd"
-
-#### About LZMA
-
-[LZMA](https://www.7-zip.org/sdk.html) is a lossless data compression algorithm with higher compression ratio than LZ4, GZIP, BZIP, and ZSTD. Several archive container formats supports LZMA:
-
-- ".lzma" is a very simple format to contain LZMA, which is legacy and gradually replaced by ".xz" format.
-- ".7z" and ".xz" format, whose default compression method is LZMA.
-
-#### About ZIP
-
-[ZIP](https://docs.fileformat.com/compression/zip/) is not a data compression algorithm, but a container format that supports file packaging and compressing by many compression algorithms.
-
-This code supports compress a file to ZIP container by deflate algorithm or LZMA algorithm.
+|                         format                          | year | Explanation                                                  |
+| :-----------------------------------------------------: | :--: | :----------------------------------------------------------- |
+|   **[GZIP](https://www.rfc-editor.org/rfc/rfc1952)**    | 1989 | GZIP is an old, famous lossless data compression algorithm which has excellent compatibility. The core compression algorithm of GZIP is [Deflate](https://www.rfc-editor.org/rfc/rfc1951). The file name suffix of compressed GZIP file is ".gz" |
+|          **[LZ4](https://github.com/lz4/lz4)**          | 2014 | LZ4 is a new, lightweight lossless data compression algorithm with very high decompression speed. The file name suffix of compressed LZ4 file is ".lz4" |
+|      **[ZSTD](https://github.com/facebook/zstd)**       | 2016 | ZSTD (Zstandard) is a new lossless data compression algorithm with high compression ratio and high decompression speed. The file name suffix of compressed ZSTD file is ".zstd" |
+|       **[LZMA](https://www.7-zip.org/sdk.html)**        | 2000 | LZMA is a lossless data compression algorithm with higher compression ratio than LZ4, GZIP, BZIP, and ZSTD. Several archive container formats supports LZMA:  (1) ".lzma" is a very simple format to contain LZMA, which is legacy and gradually replaced by ".xz" format. (2) ".7z" and ".xz" format, whose default compression method is LZMA. |
+|      **[LPAQ8](https://mattmahoney.net/dc/#lpaq)**      | 2008 | LPAQ8 is a slow, high-compression-ratio lossless data compression algorithm by Alexander Rhatushnyak and Matt Mahoney. The basic principle of LPAQ8 is context-mixing instead of LZ77. You can download the official implement of LPAQ8 from https://mattmahoney.net/dc/lpaq8.zip . I've put [lpaq8.exe](./lpaq8.exe) (official executable file) in this repo for comparison. |
+| **[ZIP](https://docs.fileformat.com/compression/zip/)** | 1989 | ZIP is not actually a data compression algorithm, but a container format that supports file packaging and compressing by many compression algorithms. This code supports compress a file to ZIP container by deflate algorithm or LZMA algorithm. |
 
 　
 
@@ -46,10 +32,12 @@ This code supports compress a file to ZIP container by deflate algorithm or LZMA
 
 ## Linux Build
 
-On Linux, run following command to compile. The output Linux binary file is [tinyZZZ](./tinyZZZ)
+On Linux, run following command to compile. The output Linux binary file is [tinyZZZ](./tinyZZZ) 
+
+Note: The code complies with the C99 standard.
 
 ```bash
-gcc src/*.c -O2 -Wall -o tinyZZZ
+gcc src/*.c -O2 -std=c99 -Wall -o tinyZZZ
 ```
 
 　
@@ -61,7 +49,7 @@ gcc src/*.c -O2 -Wall -o tinyZZZ
 If you installed MinGW in Windows, run following command to compile. The output executable file is [tinyZZZ.exe](./tinyZZZ.exe)
 
 ```powershell
-gcc src\*.c -O2 -Wall -o tinyZZZ.exe
+gcc src\*.c -O2 -std=c99 -Wall -o tinyZZZ.exe
 ```
 
 　
@@ -96,12 +84,12 @@ Run TinyZZZ to show usage:
 |   - compress a file to ZSTD file :  *** not yet supported! ***                            |
 |   - decompress a LZMA file       :  tinyZZZ -d --lzma <input_file(.lzma)> <output_file>   |
 |   - compress a file to LZMA file :  tinyZZZ -c --lzma <input_file> <output_file(.lzma)>   |
+|   - decompress a LPAQ8 file      :  tinyZZZ -d --lpaq8 <input_file(.lpaq8)> <output_file> |
+|   - compress a file to LPAQ8 file:  tinyZZZ -c --lpaq8 <input_file> <output_file(.lpaq8)> |
 |-------------------------------------------------------------------------------------------|
-|  Usage (ZIP) :                                                                            |
-|   - compress a file to ZIP container file using deflate (GZIP) method                     |
-|       tinyZZZ -c --gzip --zip <input_file> <output_file(.zip)>                            |
-|   - compress a file to ZIP container file using LZMA method                               |
-|       tinyZZZ -c --lzma --zip <input_file> <output_file(.zip)>                            |
+|  Usage (compress to ZIP container) :                                                      |
+|   - use Deflate method : tinyZZZ -c --gzip --zip <input_file> <output_file(.zip)>         |
+|   - use LZMA method    : tinyZZZ -c --lzma --zip <input_file> <output_file(.zip)>         |
 |-------------------------------------------------------------------------------------------|
 ```
 
@@ -165,12 +153,10 @@ Run TinyZZZ to show usage:
 
 #### on Windows
 
-On Windows, you can use the [official 7ZIP/LZMA software](https://www.7-zip.org/sdk.html) to decompress the generated ".lzma" file. To get it, download the "LZMA SDK", extract it. In the "bin" directory, you can see "lzma.exe".
-
-To decompress a ".lzma" file, run command as format:
+On Windows, you can use the [official 7ZIP/LZMA software](https://www.7-zip.org/sdk.html) to decompress the generated ".lzma" file. To get it, download the "LZMA SDK", extract it. In the "bin" directory, you can see "lzma.exe". To decompress a ".lzma" file, run command as format:
 
 ```powershell
-.\lzma.exe d [input_lzma_file] [output_file]
+.\lzma.exe d <input_lzma_file> <output_file>
 ```
 
 #### on Linux
@@ -181,13 +167,11 @@ On Linux, you can decompress ".lzma" file using the official "p7zip" software. Y
 apt-get install p7zip
 ```
 
-Then use following command to decompress the ".lzma" file.
+Then use following command to decompress the ".lzma" file. It may report a error : *"ERROR: There are some data after the end of the payload data"* . Just ignore it, because there may be a extra "0x00" at the end of ".lzma" file. It won't affect the normal data decompression.
 
 ```bash
 7z x [input_lzma_file]
 ```
-
-It may report a error : *"ERROR: There are some data after the end of the payload data"* . Just ignore it, because there may be a extra "0x00" at the end of ".lzma" file. It won't affect the normal data decompression.
 
 　
 
@@ -216,3 +200,8 @@ It may report a error : *"ERROR: There are some data after the end of the payloa
 - An FPGA-based hardware GZIP data compressor: https://github.com/WangXuan95/FPGA-Gzip-compressor
 
 - An FPGA-based hardware LZMA data compressor: https://github.com/WangXuan95/FPGA-LZMA-compressor
+
+- LPAQ8 official code : https://mattmahoney.net/dc/#lpaq
+
+- principle of context-mixing and PAQ : https://mattmahoney.net/dc/dce.html#Section_43
+

@@ -1,8 +1,8 @@
 #include <stddef.h>   // size_t
 #include <stdint.h>   // uint8_t, uint16_t, int32_t, uint64_t
+#include <string.h>   // memset, memcpy
 #include <stdlib.h>   // malloc, free, exit
 #include <stdio.h>    // printf
-#include <string.h>   // memset, memcpy
 
 
 typedef uint8_t  u8;

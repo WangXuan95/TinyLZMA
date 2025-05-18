@@ -11,23 +11,25 @@
 #include "zstdD.h"
 #include "lzmaD.h"
 #include "lzmaC.h"
+#include "lpaq8CD.h"
 #include "zipC.h"
 
 
 
 const char *USAGE =
     "|-------------------------------------------------------------------------------------------|\n"
-    "|  TinyZZZ v0.4                                     https://github.com/WangXuan95/TinyZZZ   |\n"
-    "|    TinyZZZ is a simple, standalone data compressor/decompressor which supports several    |\n"
-    "|    popular data compression algorithms, including GZIP, LZ4, ZSTD, and LZMA. These        |\n"
-    "|    algorithms are written in C language, unlike the official code implementation,         |\n"
-    "|    this code mainly focuses on simplicity and easy to understand.                         |\n"
+    "|  TinyZZZ v0.5                                     https://github.com/WangXuan95/TinyZZZ   |\n"
+    "|    TinyZZZ is a simple, standalone data compressor/decompressor with several popular data |\n"
+    "|    compression algorithms, which are written in C language (C99). Unlike the official     |\n"
+    "|    implementations, this code mainly focuses on simplicity and easy to understand.        |\n"
     "|-------------------------------------------------------------------------------------------|\n"
     "|  currently support:                                                                       |\n"
-    "|   - GZIP compress                                                                         |\n"
-    "|   - LZ4  decompress and compress                                                          |\n"
-    "|   - ZSTD decompress                                                                       |\n"
-    "|   - LZMA decompress and compress                                                          |\n"
+    "|   - GZIP  compress                                                                        |\n"
+    "|   - LZ4   decompress and compress                                                         |\n"
+    "|   - ZSTD  decompress                                                                      |\n"
+    "|   - LZMA  decompress and compress                                                         |\n"
+    "|   - LPAQ8 decompress and compress                                                         |\n"
+    "|   - compress a file to ZIP container file using deflate (GZIP) method or LZMA method      |\n"
     "|-------------------------------------------------------------------------------------------|\n"
     "|  Usage :                                                                                  |\n"
     "|   - decompress a GZIP file       :  *** not yet supported! ***                            |\n"
@@ -38,12 +40,12 @@ const char *USAGE =
     "|   - compress a file to ZSTD file :  *** not yet supported! ***                            |\n"
     "|   - decompress a LZMA file       :  tinyZZZ -d --lzma <input_file(.lzma)> <output_file>   |\n"
     "|   - compress a file to LZMA file :  tinyZZZ -c --lzma <input_file> <output_file(.lzma)>   |\n"
+    "|   - decompress a LPAQ8 file      :  tinyZZZ -d --lpaq8 <input_file(.lpaq8)> <output_file> |\n"
+    "|   - compress a file to LPAQ8 file:  tinyZZZ -c --lpaq8 <input_file> <output_file(.lpaq8)> |\n"
     "|-------------------------------------------------------------------------------------------|\n"
-    "|  Usage (ZIP) :                                                                            |\n"
-    "|   - compress a file to ZIP container file using deflate (GZIP) method                     |\n"
-    "|       tinyZZZ -c --gzip --zip <input_file> <output_file(.zip)>                            |\n"
-    "|   - compress a file to ZIP container file using LZMA method                               |\n"
-    "|       tinyZZZ -c --lzma --zip <input_file> <output_file(.zip)>                            |\n"
+    "|  Usage (compress to ZIP container) :                                                      |\n"
+    "|   - use Deflate method : tinyZZZ -c --gzip --zip <input_file> <output_file(.zip)>         |\n"
+    "|   - use LZMA method    : tinyZZZ -c --lzma --zip <input_file> <output_file(.zip)>         |\n"
     "|-------------------------------------------------------------------------------------------|\n";
 
 
@@ -71,14 +73,15 @@ static void removeDirectoryPathFromFileName (char *fname) {
 
 int main (int argc, char **argv) {
 
-    enum     {ACTION_NONE, COMPRESS, DECOMPRESS}  type_action = ACTION_NONE;
-    enum     {FORMAT_NONE, GZIP, LZ4, ZSTD, LZMA} type_format = FORMAT_NONE;
-    enum     {NATIVE, ZIP}                     type_container = NATIVE;
+    enum     {ACTION_NONE, COMPRESS, DECOMPRESS}         type_action = ACTION_NONE;
+    enum     {FORMAT_NONE, GZIP, LZ4, ZSTD, LZMA, LPAQ8} type_format = FORMAT_NONE;
+    enum     {NATIVE, ZIP}                            type_container = NATIVE;
 
     char    *fname_src=NULL, *fname_dst=NULL;
     uint8_t *p_src         , *p_dst;
     size_t   src_len       ,  dst_len , MAX_DST_LEN = IS_64b_SYSTEM ? 0x80000000 : 0x20000000;
     int      ret_code = 0;
+    uint8_t  compress_level = 2;
 
 
     // parse command line --------------------------------------------------------------------------------------------------
@@ -97,8 +100,12 @@ int main (int argc, char **argv) {
                 type_format = ZSTD;
             } else if (strcmp(arg, "--lzma") == 0) {
                 type_format = LZMA;
+            } else if (strcmp(arg, "--lpaq8") == 0) {
+                type_format = LPAQ8;
             } else if (strcmp(arg, "--zip" ) == 0) {
                 type_container = ZIP;
+            } else if ('0' <= arg[1] && arg[1] <= '9') {
+                compress_level = arg[1] - '0';
             } else {
                 printf(USAGE);  // unknown switch
                 return -1;
@@ -199,6 +206,20 @@ int main (int argc, char **argv) {
                 printf("*** error : ZSTD compress is not yet supported\n");
                 return -1;
             }
+            break;
+        }
+        case LPAQ8 : {
+            size_t mem_usage = 0;
+            if (type_action == DECOMPRESS) {
+                ret_code = lpaq8D(p_src, src_len, p_dst, &dst_len, &compress_level, &mem_usage);
+            } else if (type_container != ZIP) {
+                ret_code = lpaq8C(p_src, src_len, p_dst, &dst_len,  compress_level, &mem_usage);
+            } else {
+                printf("*** error : LPAQ8 compress to ZIP is not supported\n");
+                return -1;
+            }
+            printf("compress level   = %d\n", (int)compress_level);
+            printf("memory usage     = %lu\n", mem_usage);
             break;
         }
         case FORMAT_NONE : {

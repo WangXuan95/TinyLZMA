@@ -1,13 +1,13 @@
-#include <stddef.h>
-#include <stdint.h>
-#include <stdlib.h>                     // this code only use malloc and free
+#include <stddef.h>   // size_t
+#include <stdint.h>   // uint8_t, uint16_t, uint32_t
+#include <stdlib.h>   // malloc, free
 
-
-// return codes --------------------
 #define   R_OK                           0
 #define   R_ERR_MEMORY_RUNOUT            1
 #define   R_ERR_UNSUPPORTED              2
 #define   R_ERR_OUTPUT_OVERFLOW          3
+
+#define RET_WHEN_ERR(err_code)          { int ec = (err_code); if (ec)  return ec; }
 
 
 
@@ -18,9 +18,6 @@
 //    uint32_t : as generic integers
 //    size_t   : as data length
 
-
-
-#define RET_IF_ERROR(expression)  { int res = (expression);   if (res != R_OK) return res; }
 
 
 
@@ -732,11 +729,11 @@ int lzmaC (uint8_t *p_src, size_t src_len, uint8_t *p_dst, size_t *p_dst_len) {
     
     hdr_len = *p_dst_len;                                                      // set available space for header length
     
-    RET_IF_ERROR( writeLzmaHeader(p_dst, &hdr_len, src_len, 1) );              // 
+    RET_WHEN_ERR( writeLzmaHeader(p_dst, &hdr_len, src_len, 1) );              // 
     
     cmprs_len = *p_dst_len - hdr_len;                                          // set available space for compressed data length
     
-    RET_IF_ERROR( lzmaEncode(p_src, src_len, p_dst+hdr_len, &cmprs_len, 1) );  // do compression
+    RET_WHEN_ERR( lzmaEncode(p_src, src_len, p_dst+hdr_len, &cmprs_len, 1) );  // do compression
     
     *p_dst_len = hdr_len + cmprs_len;                                          // the final output data length = LZMA file header len + compressed data len
     
